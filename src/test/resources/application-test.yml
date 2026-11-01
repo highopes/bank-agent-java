@@ -1,0 +1,11 @@
+# Offline test profile: in-memory database, no OpenAI key, no private secrets file.
+spring:
+  datasource:
+    url: "jdbc:h2:mem:bankagent-test;DB_CLOSE_DELAY=-1"
+bank-agent:
+  openai:
+    api-key: ""
+logging:
+  level:
+    root: WARN
+    com.demo.bankagent: WARN

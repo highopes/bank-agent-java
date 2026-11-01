@@ -1,0 +1,36 @@
+# Secrets and local environment files (never commit real credentials)
+.env
+.env.*
+!.env.example
+*secrets*
+!*secrets*.example.*
+!**/*secrets*.example.properties
+*.local.properties
+application-local.*
+config/*.properties
+!config/*.example.properties
+
+# Build output
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# Runtime data (H2 database files, logs)
+data/
+*.mv.db
+*.trace.db
+*.lock.db
+logs/
+*.log
+*.pid
+
+# IDE and OS files
+.idea/
+*.iml
+.vscode/
+.DS_Store
+.classpath
+.project
+.settings/
+
+# Local agent context
+.agent-context/

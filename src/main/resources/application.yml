@@ -1,0 +1,98 @@
+# Phase 1 configuration. Secrets are NOT stored here: they are imported from a private file outside
+# the repository (default ~/.config/bank-agent-java/application-secrets.properties) or from
+# environment variables, which take precedence.
+spring:
+  application:
+    name: bank-agent-java
+  config:
+    import: "optional:file:${BANK_AGENT_SECRETS_FILE:${user.home}/.config/bank-agent-java/application-secrets.properties}"
+  datasource:
+    # File-based H2 kept outside the (OneDrive-synced) project folder to avoid sync and lock issues.
+    url: "jdbc:h2:file:${BANK_AGENT_DATA_DIR:${user.home}/.local/share/bank-agent-java}/h2/bankagent;DB_CLOSE_ON_EXIT=FALSE"
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema.sql
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        jdbc.time_zone: Asia/Shanghai
+  h2:
+    console:
+      enabled: false
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    generator:
+      write-bigdecimal-as-plain: true
+    default-property-inclusion: non_null
+  thymeleaf:
+    cache: true
+  threads:
+    virtual:
+      enabled: false
+
+server:
+  # Bind to loopback only by default; override with BANK_AGENT_HOST / BANK_AGENT_PORT if needed.
+  address: ${BANK_AGENT_HOST:127.0.0.1}
+  port: ${BANK_AGENT_PORT:8080}
+  error:
+    include-stacktrace: never
+    include-message: never
+    include-exception: false
+    whitelabel:
+      enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+  info:
+    env:
+      enabled: false
+
+bank-agent:
+  openai:
+    api-key: ${OPENAI_API_KEY:}
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+    # Low-cost default model. Change OPENAI_MODEL in the private secrets file to switch models.
+    model: ${OPENAI_MODEL:gpt-5-nano}
+    # GPT-5 family reasoning effort (minimal | low | medium | high). Set to empty for non-reasoning models.
+    reasoning-effort: ${OPENAI_REASONING_EFFORT:low}
+    max-completion-tokens: ${OPENAI_MAX_COMPLETION_TOKENS:4096}
+    timeout: ${OPENAI_TIMEOUT:90s}
+    max-retries: ${OPENAI_MAX_RETRIES:1}
+    # Full request/response logging stays off by default (cost, privacy, log size).
+    log-requests: false
+    log-responses: false
+  agent:
+    max-tool-invocations: 6
+    memory-max-messages: 20
+    max-message-length: 1000
+    router-history-turns: 8
+    max-route-steps: 3
+    conversation-ttl: 2h
+    max-conversations: 500
+  payments:
+    single-transfer-limit: "50000.00"
+    draft-ttl: 10m
+    currency: CNY
+  demo:
+    customer-id: CUST-DEMO-001
+    time-zone: Asia/Shanghai
+
+logging:
+  level:
+    root: INFO
+    com.demo.bankagent: INFO
+    dev.langchain4j: WARN

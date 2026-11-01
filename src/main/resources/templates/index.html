@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bank Agent · 智能银行助理（模拟演示）</title>
+  <link rel="stylesheet" th:href="@{/css/app.css}" href="/css/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="logo" aria-hidden="true">B</div>
+    <div>
+      <h1>Bank Agent · 智能银行助理</h1>
+      <p class="subtitle">Multi-Agent 银行业务演示 · Supervisor + Account / Transactions / Payments</p>
+    </div>
+  </div>
+  <div class="badges">
+    <span class="badge badge-demo">DEMO ACCOUNT</span>
+    <span class="badge badge-sim">Demo / Simulated Banking</span>
+    <span class="badge badge-model" th:text="'模型: ' + ${model}">模型: gpt-5-nano</span>
+    <span class="badge" th:classappend="${llmConfigured} ? 'badge-ok' : 'badge-warn'"
+          th:text="${llmConfigured} ? 'OpenAI 已配置' : 'OpenAI 未配置'">OpenAI</span>
+  </div>
+</header>
+
+<div class="notice">
+  本页面为<strong>模拟银行演示</strong>：所有客户、账户、收款人与交易均为虚构数据，转账仅在本地模拟数据库中记账，不会产生任何真实资金流动。
+</div>
+
+<main class="layout">
+  <aside class="sidebar">
+    <section class="card">
+      <h2>演示账户</h2>
+      <div id="profile" class="profile"><p class="muted">加载中…</p></div>
+    </section>
+    <section class="card">
+      <h2>已登记收款人</h2>
+      <ul id="beneficiaries" class="plain-list"><li class="muted">加载中…</li></ul>
+      <p class="muted small">单笔模拟转账上限：<span th:text="${transferLimit}">50000</span> 元</p>
+    </section>
+    <section class="card">
+      <h2>示例问题</h2>
+      <div id="examples" class="chips"></div>
+    </section>
+    <section class="card actions">
+      <button id="newConversation" class="btn btn-secondary" type="button">新建会话</button>
+      <button id="resetDemo" class="btn btn-danger" type="button">重置演示数据</button>
+      <p class="muted small">重置会恢复初始余额与交易，并清空所有会话（仅限本机访问）。</p>
+    </section>
+  </aside>
+
+  <section class="chat">
+    <div id="messages" class="messages" aria-live="polite">
+      <div class="msg msg-assistant">
+        <div class="bubble">
+          您好，我是模拟银行的智能助理。可以帮您查询账户余额、交易记录、消费分析，也可以为已登记收款人准备转账草稿（需要您在页面上点击确认后才会执行）。
+        </div>
+      </div>
+    </div>
+    <div id="typing" class="typing hidden"><span></span><span></span><span></span> 助理正在处理…</div>
+    <form id="chatForm" class="composer" autocomplete="off">
+      <textarea id="messageInput" rows="2" maxlength="1000" placeholder="请输入您的问题，例如：我现在的活期账户余额是多少？"></textarea>
+      <button id="sendBtn" class="btn btn-primary" type="submit">发送</button>
+    </form>
+    <div class="conv-meta muted small">会话 ID：<span id="convId">（新会话）</span></div>
+  </section>
+
+  <aside class="debug">
+    <section class="card">
+      <h2>执行详情 <span class="muted small">（来自后端真实执行记录）</span></h2>
+      <div id="debugPanel" class="debug-panel"><p class="muted">发送消息后显示 Agent 路由、Tool 调用与耗时。</p></div>
+    </section>
+  </aside>
+</main>
+
+<footer class="footer muted small">
+  Phase 1 · Java 21 · Spring Boot · LangChain4j · H2 本地模拟数据 · 仅绑定 127.0.0.1
+</footer>
+<script th:src="@{/js/app.js}" src="/js/app.js"></script>
+</body>
+</html>
