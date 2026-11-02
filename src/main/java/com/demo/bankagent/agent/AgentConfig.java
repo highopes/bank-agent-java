@@ -1,6 +1,8 @@
 package com.demo.bankagent.agent;
 
 import com.demo.bankagent.config.BankAgentProperties;
+import com.demo.bankagent.control.StepCatalog;
+import com.demo.bankagent.governance.StepGovernance;
 import com.demo.bankagent.llm.SecretMasker;
 import com.demo.bankagent.service.BankingException;
 import com.demo.bankagent.tool.AccountTools;
@@ -21,6 +23,11 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Wires the three domain agents as LangChain4j AI services. The model decides when to call the
  * @Tool methods; tool executions are recorded into the request's ExecutionTrace.
+ *
+ * <p>Phase 2: the model and the tools are obtained through {@link StepGovernance}: each agent gets a
+ * GovernedChatModel (LLM spans + LLM Control, step name "&lt;agent&gt;-agent") and every @Tool method a
+ * GovernedToolExecutor (tool span + PRE/POST Control around the real method). The original afterToolExecution
+ * and error handlers are unchanged.
  */
 @Configuration
 public class AgentConfig {
@@ -30,29 +37,32 @@ public class AgentConfig {
 
     @Bean
     public AccountAgent accountAgent(ChatModel chatModel, AccountTools tools, AgentMemoryStores memory,
-                                     AgentPrompts prompts, BankAgentProperties properties) {
-        return build(AccountAgent.class, AgentType.ACCOUNT, chatModel, tools, memory, prompts, properties);
+                                     AgentPrompts prompts, BankAgentProperties properties, StepGovernance governance) {
+        return build(AccountAgent.class, AgentType.ACCOUNT, chatModel, tools, memory, prompts, properties, governance);
     }
 
     @Bean
     public TransactionsAgent transactionsAgent(ChatModel chatModel, TransactionTools tools, AgentMemoryStores memory,
-                                               AgentPrompts prompts, BankAgentProperties properties) {
-        return build(TransactionsAgent.class, AgentType.TRANSACTIONS, chatModel, tools, memory, prompts, properties);
+                                               AgentPrompts prompts, BankAgentProperties properties,
+                                               StepGovernance governance) {
+        return build(TransactionsAgent.class, AgentType.TRANSACTIONS, chatModel, tools, memory, prompts, properties,
+                governance);
     }
 
     @Bean
     public PaymentsAgent paymentsAgent(ChatModel chatModel, PaymentTools tools, AgentMemoryStores memory,
-                                       AgentPrompts prompts, BankAgentProperties properties) {
-        return build(PaymentsAgent.class, AgentType.PAYMENTS, chatModel, tools, memory, prompts, properties);
+                                       AgentPrompts prompts, BankAgentProperties properties, StepGovernance governance) {
+        return build(PaymentsAgent.class, AgentType.PAYMENTS, chatModel, tools, memory, prompts, properties, governance);
     }
 
     private static <T> T build(Class<T> type, AgentType agent, ChatModel chatModel, Object tools,
-                               AgentMemoryStores memory, AgentPrompts prompts, BankAgentProperties properties) {
+                               AgentMemoryStores memory, AgentPrompts prompts, BankAgentProperties properties,
+                               StepGovernance governance) {
         return AiServices.builder(type)
-                .chatModel(chatModel)
+                .chatModel(governance.governChatModel(chatModel, StepCatalog.agentStep(agent)))
                 .chatMemoryProvider(memory.provider(agent))
                 .systemMessageProvider(memoryId -> prompts.systemPrompt(agent))
-                .tools(tools)
+                .tools(governance.governTools(tools))
                 .maxSequentialToolsInvocations(properties.agent().maxToolInvocations())
                 .afterToolExecution(AgentConfig::recordToolExecution)
                 .toolExecutionErrorHandler(AgentConfig::toolError)

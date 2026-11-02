@@ -265,6 +265,54 @@ public class PaymentService {
         return drafts.findById(draftId).map(this::toView);
     }
 
+    /**
+     * Read-only lookup of a draft owned by this conversation/customer (no audit, no lock). Used to build the Agent
+     * Control input for the confirmation step; the authoritative checks still happen inside {@link #confirm}.
+     */
+    @Transactional(readOnly = true)
+    public Optional<TransferDraftView> findOwnedDraft(String draftId, String conversationId, String customerId) {
+        return drafts.findById(draftId)
+                .filter(d -> d.getConversationId().equals(conversationId) && d.getCustomerId().equals(customerId))
+                .map(this::toView);
+    }
+
+    /**
+     * Phase 2: a pending draft whose creation output was blocked by Agent Control (post deny / steer / fail-closed)
+     * is withdrawn - cancelled with code CONTROL_WITHDRAWN and an audit record. Nothing is deleted; no money moves.
+     */
+    @Transactional(noRollbackFor = BankingException.class)
+    public Optional<TransferDraftView> withdrawByControl(String draftId, String conversationId, String customerId,
+                                                         String reason) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        TransferDraft draft = lockOwnedDraft(draftId, conversationId, customerId, PaymentAuditAction.CANCEL_REJECTED);
+        if (draft.getStatus() != TransferStatus.PENDING_CONFIRMATION) {
+            return Optional.of(toView(draft));
+        }
+        String detail = shorten(reason, 290);
+        draft.markCancelled(now, "CONTROL_WITHDRAWN", detail);
+        audit(draft.getId(), conversationId, customerId, PaymentAuditAction.CANCELLED, "CANCELLED",
+                draft.getBeneficiaryName(), draft.getAmount(), "CONTROL_WITHDRAWN", detail);
+        log.info("Transfer draft withdrawn by Agent Control id={} conversation={}", draft.getId(), conversationId);
+        return Optional.of(toView(draft));
+    }
+
+    /** Phase 2: audits a confirmation that Agent Control blocked before {@link #confirm} ran (no debit happened). */
+    @Transactional
+    public void auditControlRejectedConfirmation(String draftId, String conversationId, String customerId, String code,
+                                                 String detail) {
+        TransferDraft draft = drafts.findById(draftId).orElse(null);
+        audit(draftId, conversationId, customerId, PaymentAuditAction.CONFIRM_REJECTED, "REJECTED",
+                draft == null ? null : draft.getBeneficiaryName(), draft == null ? null : draft.getAmount(),
+                shorten(code, 190), shorten(detail, 490));
+    }
+
+    private static String shorten(String text, int max) {
+        if (text == null) {
+            return null;
+        }
+        return text.length() > max ? text.substring(0, max) : text;
+    }
+
     private void expireStale(String conversationId, String customerId) {
         LocalDateTime now = LocalDateTime.now(clock);
         for (TransferDraft d : drafts.findByConversationIdAndStatusOrderByCreatedAtDesc(conversationId,

@@ -1,0 +1,1 @@
+{"is_safe":true,"confidence":1.0,"reason":null,"matches":[{"control_id":41,"control_name":"legacy-warn","action":"warn","result":{"matched":true,"confidence":1.0,"message":"legacy"}}],"errors":null,"non_matches":null}

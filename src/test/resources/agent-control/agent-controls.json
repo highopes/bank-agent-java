@@ -1,0 +1,6 @@
+{"controls":[
+ {"id":13,"name":"bank-java-p0-observe-balance","control":{"condition":{"selector":{"path":"input"},"evaluator":{"name":"regex","config":{"pattern":"CHECKING"}}},"enabled":true,"execution":"server","scope":{"step_types":["tool"],"step_names":["getAccountBalance"],"stages":["pre"]},"action":{"decision":"observe"}}},
+ {"id":17,"name":"llm-post-regex","control":{"condition":{"selector":{"path":"output"},"evaluator":{"name":"regex","config":{"pattern":"x"}}},"enabled":true,"execution":"server","scope":{"step_types":["llm"],"step_name_regex":"-agent$","stages":["post"]},"action":{"decision":"steer"}}},
+ {"id":18,"name":"disabled-control","control":{"condition":{"selector":{"path":"input"},"evaluator":{"name":"regex","config":{"pattern":"x"}}},"enabled":false,"execution":"server","scope":{"step_names":["listBeneficiaries"]},"action":{"decision":"deny"}}},
+ {"id":19,"name":"sdk-only-control","control":{"condition":{"selector":{"path":"input"},"evaluator":{"name":"regex","config":{"pattern":"x"}}},"enabled":true,"execution":"sdk","scope":{"step_names":["searchTransactions"],"stages":["pre"]},"action":{"decision":"deny"}}}
+]}

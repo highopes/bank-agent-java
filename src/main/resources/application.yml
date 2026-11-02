@@ -1,11 +1,14 @@
-# Phase 1 configuration. Secrets are NOT stored here: they are imported from a private file outside
-# the repository (default ~/.config/bank-agent-java/application-secrets.properties) or from
-# environment variables, which take precedence.
+# Application configuration. Secrets are NOT stored here: they are imported from private files outside
+# the repository (default ~/.config/bank-agent-java/application-secrets.properties for OpenAI and
+# ~/.config/bank-agent-java/galileo.properties for Phase 2 Observe / Agent Control) or from environment
+# variables, which take precedence.
 spring:
   application:
     name: bank-agent-java
   config:
-    import: "optional:file:${BANK_AGENT_SECRETS_FILE:${user.home}/.config/bank-agent-java/application-secrets.properties}"
+    import:
+      - "optional:file:${BANK_AGENT_SECRETS_FILE:${user.home}/.config/bank-agent-java/application-secrets.properties}"
+      - "optional:file:${BANK_AGENT_GALILEO_FILE:${user.home}/.config/bank-agent-java/galileo.properties}"
   datasource:
     # File-based H2 kept outside the (OneDrive-synced) project folder to avoid sync and lock issues.
     url: "jdbc:h2:file:${BANK_AGENT_DATA_DIR:${user.home}/.local/share/bank-agent-java}/h2/bankagent;DB_CLOSE_ON_EXIT=FALSE"
@@ -90,9 +93,67 @@ bank-agent:
   demo:
     customer-id: CUST-DEMO-001
     time-zone: Asia/Shanghai
+  # ---------------------------------------------------------------------------------------------------------
+  # Phase 2 user settings (private galileo.properties or same-named environment variables). Raw strings only:
+  # an EMPTY value means "derive from the active profile" (see AoEndpointResolver and docs/CONFIG-MAPPING.md).
+  # Switches default to off: no validation and no network calls until OBSERVABILITY_ENABLED / CONTROL_MODE are set.
+  # ---------------------------------------------------------------------------------------------------------
+  ao:
+    observability-enabled: ${OBSERVABILITY_ENABLED:false}
+    control-mode: ${CONTROL_MODE:off}
+    demo-trace-content: ${DEMO_TRACE_CONTENT:false}
+    realm: ${AO_REALM:}
+    o11y-token: ${AO_O11Y_TOKEN:}
+    console-url: ${AO_CONSOLE_URL:}
+    api-key: ${AO_API_KEY:}
+    project-name: ${AO_PROJECT_NAME:}
+    agent-stream: ${AO_AGENT_STREAM:}
+    backend-profile: ${AO_BACKEND_PROFILE:}
+    api-url: ${AO_API_URL:}
+    o11y-api-token: ${AO_O11Y_API_TOKEN:}
+    otlp-endpoint: ${AO_OTLP_ENDPOINT:}
+    otlp-auth-header: ${AO_OTLP_AUTH_HEADER:}
+    service-name: ${OTEL_SERVICE_NAME:}
+    agent-control-url: ${AGENT_CONTROL_URL:}
+    agent-control-evaluation-path: ${AGENT_CONTROL_EVALUATION_PATH:}
+    agent-control-api-key-header: ${AGENT_CONTROL_API_KEY_HEADER:}
+    agent-control-api-key: ${AGENT_CONTROL_API_KEY:}
+    agent-control-agent-name: ${AGENT_CONTROL_AGENT_NAME:}
+    agent-control-target-type: ${AGENT_CONTROL_TARGET_TYPE:}
+    agent-control-runtime-auth-mode: ${AGENT_CONTROL_RUNTIME_AUTH_MODE:}
+    agent-control-runtime-token-header: ${AGENT_CONTROL_RUNTIME_TOKEN_HEADER:}
+    control-read-failure-mode: ${CONTROL_READ_FAILURE_MODE:}
+    control-write-failure-mode: ${CONTROL_WRITE_FAILURE_MODE:}
+    max-control-steer-retries: ${MAX_CONTROL_STEER_RETRIES:}
+  # Non-secret OpenTelemetry tuning (not user configuration).
+  observability:
+    service-version: "@project.version@"
+    deployment-environment: local-demo
+    sampling-ratio: 1.0
+    export-timeout: 10s
+    batch-schedule-delay: 2s
+    max-export-batch-size: 256
+    max-queue-size: 2048
+    max-attribute-length: 16384
+    max-content-chars: 2000
+    api-timeout: 10s
+    api-max-attempts: 3
+  # Non-secret Agent Control client tuning. Evaluation is synchronous and on the request path.
+  control:
+    connect-timeout: 3s
+    request-timeout: 5s
+    evaluation-attempts: 2
+    token-refresh-margin: 30s
+    # Bound controls are re-read at most this often to skip steps no control applies to (official SDK behaviour);
+    # a Console change therefore takes effect within this interval, without a restart.
+    controls-refresh-interval: 5s
+    prefilter: true
+    startup-attempts: 3
 
 logging:
   level:
     root: INFO
     com.demo.bankagent: INFO
     dev.langchain4j: WARN
+    # OTLP exporter failures are logged at WARN by the SDK; never enable HTTP wire logging (it contains headers).
+    io.opentelemetry: WARN

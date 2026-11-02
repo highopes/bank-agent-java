@@ -124,10 +124,18 @@
     }
     let data = null;
     try { data = await res.json(); } catch (e) { data = null; }
+    const traceId = res.headers.get('X-Bank-Trace-Id');
     if (!res.ok) {
-      throw data && data.code ? data : { code: 'HTTP_' + res.status, message: '请求失败（HTTP ' + res.status + '）。' };
+      const err = data && data.code ? data : { code: 'HTTP_' + res.status, message: '请求失败（HTTP ' + res.status + '）。' };
+      if (traceId) err.traceId = traceId;
+      throw err;
     }
+    if (traceId && data && typeof data === 'object') data.traceId = data.traceId || traceId;
     return data;
+  }
+
+  function traceNote(traceId) {
+    return traceId ? ' <span class="muted">（Trace：<code>' + escapeHtml(traceId) + '</code>）</span>' : '';
   }
 
   function errorText(err) {
@@ -138,6 +146,14 @@
       CONVERSATION_NOT_FOUND: '会话已失效，请新建会话。',
       LOCAL_ACCESS_ONLY: '该操作仅允许在本机执行。'
     };
+    const control = {
+      CONTROL_DENIED: 'Agent Control 安全策略拒绝了该操作（未执行，未扣款）：',
+      CONTROL_STEER_REQUIRES_USER_ACTION: 'Agent Control 要求调整后才能执行（未执行，未扣款）：',
+      CONTROL_UNAVAILABLE: '安全检查服务暂时不可用，操作未执行（fail-closed，未扣款）：'
+    };
+    if (control[err.code]) {
+      return control[err.code] + (err.message || '') + ' [' + err.code + ']';
+    }
     const base = map[err.code] || err.message || '请求失败。';
     return base + ' [' + (err.code || 'ERROR') + ']';
   }
@@ -153,7 +169,11 @@
       state.conversationId = data.conversationId;
       $('convId').textContent = data.conversationId;
       const agents = (data.selectedAgents || []).map((a) => AGENT_LABELS[a] || a).join(' + ');
-      const meta = (agents ? escapeHtml(agents) + ' · ' : '') + (data.durationMs / 1000).toFixed(1) + 's';
+      let meta = (agents ? escapeHtml(agents) + ' · ' : '') + (data.durationMs / 1000).toFixed(1) + 's';
+      // Fail-open read steps: the answer was produced WITHOUT a safety check - say so, never imply it passed.
+      if ((data.controlDecisions || []).some((c) => c.verdict === 'PROCEED_UNCHECKED')) {
+        meta += ' · <span class="warn">⚠ Agent Control 服务不可用：部分只读步骤未经安全检查（fail-open）</span>';
+      }
       const node = addMessage('assistant', renderMarkdown(data.answer || ''), meta);
       applyDraftEvents(data.draftEvents || []);
       if (data.pendingDraft && data.pendingDraft.status === 'PENDING_CONFIRMATION') {
@@ -216,6 +236,8 @@
         setCardStatus(card, 'CANCELLED', '<span class="muted">已被新的转账草稿替代，此草稿作废。</span>');
       } else if (ev.event === 'CANCELLED') {
         setCardStatus(card, ev.status || 'CANCELLED', '<span class="muted">已根据您的对话指令取消，未发生扣款。</span>');
+      } else if (ev.event === 'WITHDRAWN') {
+        setCardStatus(card, 'CANCELLED', '<span class="fail">Agent Control 拦截了草稿结果，草稿已撤回，未发生扣款。</span>');
       }
     }
   }
@@ -233,10 +255,10 @@
           ? '该转账此前已执行，本次未重复扣款。'
           : '转账已执行（模拟）：向 ' + escapeHtml(d.beneficiaryName) + ' 转出 ' + money(d.amount, d.currency) +
             '，转出账户余额 ' + money(data.balanceAfter, d.currency) + '。';
-        setCardStatus(card, d.status, '<span class="ok">' + text + '</span>');
+        setCardStatus(card, d.status, '<span class="ok">' + text + '</span>' + traceNote(data.traceId));
         addMessage('system', '✅ ' + text);
       } else {
-        setCardStatus(card, data.status, '<span class="muted">转账已取消，未发生扣款。</span>');
+        setCardStatus(card, data.status, '<span class="muted">转账已取消，未发生扣款。</span>' + traceNote(data.traceId));
         addMessage('system', '已取消转账草稿：' + escapeHtml(data.beneficiaryName) + ' ' + money(data.amount, data.currency) + '，未发生扣款。');
       }
       refreshProfile();
@@ -244,10 +266,10 @@
       const terminal = { DRAFT_EXPIRED: 'EXPIRED', DRAFT_CANCELLED: 'CANCELLED', DRAFT_FAILED: 'FAILED', DRAFT_ALREADY_EXECUTED: 'EXECUTED',
         INSUFFICIENT_FUNDS: 'FAILED' }[err.code];
       if (terminal) {
-        setCardStatus(card, terminal, '<span class="fail">' + escapeHtml(errorText(err)) + '</span>');
+        setCardStatus(card, terminal, '<span class="fail">' + escapeHtml(errorText(err)) + '</span>' + traceNote(err.traceId));
       } else {
         card.querySelectorAll('.buttons button').forEach((b) => { b.disabled = false; });
-        card.querySelector('.draft-result').innerHTML = '<span class="fail">' + escapeHtml(errorText(err)) + '</span>';
+        card.querySelector('.draft-result').innerHTML = '<span class="fail">' + escapeHtml(errorText(err)) + '</span>' + traceNote(err.traceId);
       }
       refreshProfile();
     }
@@ -282,6 +304,19 @@
     if ((data.draftEvents || []).length) {
       html += '<h4>转账草稿事件</h4><table>' + data.draftEvents.map((e) =>
         '<tr><td>' + escapeHtml(e.event) + '</td><td>' + escapeHtml(e.status || '') + '</td><td class="args">' + escapeHtml(e.draftId || '') + '</td></tr>').join('') + '</table>';
+    }
+    const controls = data.controlDecisions || [];
+    if (controls.length) {
+      const cls = { PROCEED: 'ok', PROCEED_UNCHECKED: 'warn', DENY: 'fail', STEER: 'warn', BLOCKED_UNAVAILABLE: 'fail' };
+      html += '<h4>Agent Control 检查</h4><table><tr><th>阶段 / 步骤</th><th>结果</th><th>耗时</th></tr>' + controls.map((c) =>
+        '<tr><td>' + escapeHtml(c.stage) + ' · ' + escapeHtml(c.stepName) + '<div class="args">' +
+        escapeHtml((c.controlName ? c.controlName + ' · ' : '') + (c.reason || '')) + '</div></td><td class="' +
+        (cls[c.verdict] || '') + '">' + escapeHtml(c.verdict) + (c.action ? '<div class="args">' + escapeHtml(c.action) + '</div>' : '') +
+        '</td><td>' + c.latencyMs + ' ms</td></tr>').join('') + '</table>';
+    }
+    if (data.traceId) {
+      html += '<h4>Trace</h4><div class="args">OTel trace_id：<code>' + escapeHtml(data.traceId) + '</code></div>' +
+        '<div class="args">AO Trace ID：<code>' + escapeHtml(data.aoTraceId || '') + '</code>（AO Console 中 External Id = OTel trace_id）</div>';
     }
     $('debugPanel').innerHTML = html;
   }

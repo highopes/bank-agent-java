@@ -1,0 +1,225 @@
+[
+  {
+    "name": "bank-java-observe-tool-usage",
+    "data": {
+      "description": "Demo OBSERVE: audit every read-only bank tool call (pre)",
+      "enabled": true,
+      "execution": "server",
+      "scope": {
+        "step_types": [
+          "tool"
+        ],
+        "stages": [
+          "pre"
+        ]
+      },
+      "condition": {
+        "selector": {
+          "path": "name"
+        },
+        "evaluator": {
+          "name": "regex",
+          "config": {
+            "pattern": "^(get|list|search|summarize)"
+          }
+        }
+      },
+      "action": {
+        "decision": "observe"
+      },
+      "tags": [
+        "bank-java-demo"
+      ]
+    }
+  },
+  {
+    "name": "bank-java-deny-restricted-transfer",
+    "data": {
+      "description": "Demo DENY: transfer drafts to beneficiary 王五 (BEN-003) are restricted by policy (pre)",
+      "enabled": true,
+      "execution": "server",
+      "scope": {
+        "step_types": [
+          "tool"
+        ],
+        "step_names": [
+          "createTransferDraft"
+        ],
+        "stages": [
+          "pre"
+        ]
+      },
+      "condition": {
+        "selector": {
+          "path": "input.beneficiary"
+        },
+        "evaluator": {
+          "name": "list",
+          "config": {
+            "values": [
+              "王五",
+              "BEN-003"
+            ],
+            "logic": "any",
+            "match_on": "match",
+            "match_mode": "exact",
+            "case_sensitive": true
+          }
+        }
+      },
+      "action": {
+        "decision": "deny"
+      },
+      "tags": [
+        "bank-java-demo"
+      ]
+    }
+  },
+  {
+    "name": "bank-java-deny-large-confirm",
+    "data": {
+      "description": "Demo DENY: UI confirmation of transfers of 10,000 CNY or more needs manual review (pre payment.confirm)",
+      "enabled": true,
+      "execution": "server",
+      "scope": {
+        "step_types": [
+          "tool"
+        ],
+        "step_names": [
+          "payment.confirm"
+        ],
+        "stages": [
+          "pre"
+        ]
+      },
+      "condition": {
+        "selector": {
+          "path": "input.amount"
+        },
+        "evaluator": {
+          "name": "regex",
+          "config": {
+            "pattern": "^[0-9]{5,}(\\.[0-9]+)?$"
+          }
+        }
+      },
+      "action": {
+        "decision": "deny"
+      },
+      "tags": [
+        "bank-java-demo"
+      ]
+    }
+  },
+  {
+    "name": "bank-java-deny-sensitive-output",
+    "data": {
+      "description": "Demo DENY: account overview output that contains the (fictional) customer name is withheld (post getAccountSummary, output.customerName)",
+      "enabled": true,
+      "execution": "server",
+      "scope": {
+        "step_types": [
+          "tool"
+        ],
+        "step_names": [
+          "getAccountSummary"
+        ],
+        "stages": [
+          "post"
+        ]
+      },
+      "condition": {
+        "selector": {
+          "path": "output.customerName"
+        },
+        "evaluator": {
+          "name": "regex",
+          "config": {
+            "pattern": "\\S"
+          }
+        }
+      },
+      "action": {
+        "decision": "deny"
+      },
+      "tags": [
+        "bank-java-demo"
+      ]
+    }
+  },
+  {
+    "name": "bank-java-steer-answer-format",
+    "data": {
+      "description": "Demo STEER: final answers must not use Markdown bold section titles (post banking-assistant)",
+      "enabled": true,
+      "execution": "server",
+      "scope": {
+        "step_types": [
+          "llm"
+        ],
+        "step_names": [
+          "banking-assistant"
+        ],
+        "stages": [
+          "post"
+        ]
+      },
+      "condition": {
+        "selector": {
+          "path": "output"
+        },
+        "evaluator": {
+          "name": "regex",
+          "config": {
+            "pattern": "\\*\\*(账户信息|交易记录|转账服务)\\*\\*"
+          }
+        }
+      },
+      "action": {
+        "decision": "steer",
+        "steering_context": {
+          "message": "最终回答不要使用 Markdown 粗体标记（**）。请改用纯文本小标题，例如“账户信息：”“交易记录：”，并保持所有金额、日期和名称完全不变。"
+        }
+      },
+      "tags": [
+        "bank-java-demo"
+      ]
+    }
+  },
+  {
+    "name": "bank-java-deny-prompt-injection",
+    "data": {
+      "description": "Demo DENY: obvious prompt-injection phrases in the user message (pre banking-assistant)",
+      "enabled": true,
+      "execution": "server",
+      "scope": {
+        "step_types": [
+          "llm"
+        ],
+        "step_names": [
+          "banking-assistant"
+        ],
+        "stages": [
+          "pre"
+        ]
+      },
+      "condition": {
+        "selector": {
+          "path": "input"
+        },
+        "evaluator": {
+          "name": "regex",
+          "config": {
+            "pattern": "(?i)(ignore (all )?(previous|prior) instructions|忽略(之前|以上|所有)的?(指令|规则))"
+          }
+        }
+      },
+      "action": {
+        "decision": "deny"
+      },
+      "tags": [
+        "bank-java-demo"
+      ]
+    }
+  }
+]

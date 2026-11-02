@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Pre-flight check for the Bank Agent (Phase 1). Read-only: it reports readiness and never prints
-# secret values. Exit code 0 = ready, 1 = blocking problem found.
+# Pre-flight check for the Bank Agent (Phase 1 base + Phase 2 Observe / Agent Control). Read-only: it reports
+# readiness, never prints secret values and never creates anything. Exit code 0 = ready, 1 = blocking problem.
 set -uo pipefail
 source "$(dirname "$0")/lib/common.sh"
 
@@ -97,6 +97,34 @@ if [ -f "$BANK_AGENT_JAR" ]; then
   ok "Application jar built: $BANK_AGENT_JAR"
 else
   info "Application jar not built yet; scripts/run.sh builds it automatically."
+fi
+
+# 9. Phase 2: Observe (OpenTelemetry) and Agent Control. Read-only: shows the profile, every final value with
+#    its source ([derived] / [override] / [default]) and credentials only as <set>/<missing>; looks up the
+#    project / agent stream by name but never creates anything.
+echo
+echo "${C_BOLD}== Phase 2 Observe / Agent Control ==${C_RESET}"
+if [ -f "$BANK_AGENT_GALILEO_FILE" ]; then
+  perms="$(stat -f '%Lp' "$BANK_AGENT_GALILEO_FILE" 2>/dev/null || stat -c '%a' "$BANK_AGENT_GALILEO_FILE" 2>/dev/null)"
+  ok "Phase 2 private file exists: $BANK_AGENT_GALILEO_FILE (permissions $perms)"
+  case "$perms" in 600|400) ;; *) warn "Recommended: chmod 600 \"$BANK_AGENT_GALILEO_FILE\"" ;; esac
+else
+  info "Phase 2 private file not found: $BANK_AGENT_GALILEO_FILE (Observe/Control stay off; template: config/galileo.example.properties)"
+fi
+OBS="$(phase2_switch OBSERVABILITY_ENABLED false)"
+CTL="$(phase2_switch CONTROL_MODE off)"
+if [ -n "${SELECTED_JAVA_HOME:-}" ]; then
+  if (ensure_jar >/dev/null 2>&1) && prepare_truststore >/dev/null 2>&1; then
+    if ! run_phase2_cli preflight; then
+      if [ "$OBS" = "true" ] || [ "$CTL" = "remote-api" ]; then
+        blocker "Phase 2 is switched on (OBSERVABILITY_ENABLED=$OBS, CONTROL_MODE=$CTL) but its preflight failed (see above)."
+      else
+        warn "Phase 2 settings have problems, but both switches are off, so the application is not affected."
+      fi
+    fi
+  else
+    warn "Could not build the application jar to check Phase 2 settings; run './mvnw -B package' for details."
+  fi
 fi
 
 echo

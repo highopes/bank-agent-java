@@ -6,6 +6,8 @@
 BANK_AGENT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BANK_AGENT_DATA_DIR="${BANK_AGENT_DATA_DIR:-$HOME/.local/share/bank-agent-java}"
 BANK_AGENT_SECRETS_FILE="${BANK_AGENT_SECRETS_FILE:-$HOME/.config/bank-agent-java/application-secrets.properties}"
+# Phase 2: Splunk AO / Galileo backend + Agent Control settings (private file, 0600, outside the repository).
+BANK_AGENT_GALILEO_FILE="${BANK_AGENT_GALILEO_FILE:-$HOME/.config/bank-agent-java/galileo.properties}"
 BANK_AGENT_HOST="${BANK_AGENT_HOST:-127.0.0.1}"
 BANK_AGENT_PORT="${BANK_AGENT_PORT:-8080}"
 BANK_AGENT_JAR="$BANK_AGENT_ROOT/target/bank-agent-java.jar"
@@ -15,7 +17,7 @@ BANK_AGENT_TRUSTSTORE_DEFAULT="$BANK_AGENT_DATA_DIR/tls/truststore.p12"
 # Password of a trust store that only holds public CA certificates; it is not a secret.
 BANK_AGENT_TRUSTSTORE_PASSWORD="changeit"
 
-export BANK_AGENT_DATA_DIR BANK_AGENT_SECRETS_FILE BANK_AGENT_HOST BANK_AGENT_PORT
+export BANK_AGENT_DATA_DIR BANK_AGENT_SECRETS_FILE BANK_AGENT_GALILEO_FILE BANK_AGENT_HOST BANK_AGENT_PORT
 
 if [ -t 1 ]; then
   C_RED=$'\033[31m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'; C_BOLD=$'\033[1m'; C_RESET=$'\033[0m'
@@ -104,6 +106,35 @@ secrets_has_api_key() {
 secrets_value() {
   [ -r "$BANK_AGENT_SECRETS_FILE" ] || return 1
   awk -F'=' -v key="$1" '$1 ~ "^[[:space:]]*"key"[[:space:]]*$" {sub(/^[^=]*=[[:space:]]*/, ""); print; exit}' "$BANK_AGENT_SECRETS_FILE"
+}
+
+# Phase 2: effective value of a NON-secret switch (environment variable first, then galileo.properties).
+# Never use it for credentials.
+phase2_switch() {
+  local key="$1" default="$2" value=""
+  value="$(printenv "$key" 2>/dev/null || true)"
+  if [ -z "$value" ] && [ -r "$BANK_AGENT_GALILEO_FILE" ]; then
+    value="$(awk -F'=' -v key="$key" '$1 ~ "^[[:space:]]*"key"[[:space:]]*$" {sub(/^[^=]*=[[:space:]]*/, ""); print; exit}' "$BANK_AGENT_GALILEO_FILE")"
+  fi
+  printf '%s' "${value:-$default}"
+}
+
+# JVM options for the project trust store (call prepare_truststore first).
+tls_jvm_opts() {
+  TLS_JVM_OPTS=()
+  if [ -n "${TRUSTSTORE_PATH:-}" ]; then
+    TLS_JVM_OPTS=("-Djavax.net.ssl.trustStore=$TRUSTSTORE_PATH" -Djavax.net.ssl.trustStoreType=PKCS12
+                  "-Djavax.net.ssl.trustStorePassword=$BANK_AGENT_TRUSTSTORE_PASSWORD")
+  fi
+}
+
+# Runs the Phase 2 CLI (com.demo.bankagent.cli.Phase2Cli) from the application jar. It uses the same derivation
+# code as the application and never prints credentials. Requires require_java21, ensure_jar, prepare_truststore.
+run_phase2_cli() {
+  tls_jvm_opts
+  "$JAVA_HOME/bin/java" -Dfile.encoding=UTF-8 ${TLS_JVM_OPTS[@]+"${TLS_JVM_OPTS[@]}"} \
+    -Dloader.main=com.demo.bankagent.cli.Phase2Cli -cp "$BANK_AGENT_JAR" \
+    org.springframework.boot.loader.launch.PropertiesLauncher "$@"
 }
 
 # --- TLS trust -----------------------------------------------------------------------------

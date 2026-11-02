@@ -20,7 +20,7 @@
 
 ## 2. Phase 2/3 配置（`galileo.properties`）
 
-Phase 1 代码**不读取、不使用、不发送**以下任何值；项目中也没有任何 Galileo / OpenTelemetry 依赖。推导规则、自动创建等逻辑由 Phase 2 实现。
+Phase 2 已实现以下全部推导规则与“按名称查找或创建”逻辑（`observability/AoEndpointResolver.java` 为唯一实现，`scripts/preflight.sh` 通过 `Phase2Cli` 复用它）。两个开关关闭时，这些地址与凭据不会被使用，也不会发出任何请求。
 
 **配置原则：凡是能按规则推导或能通过 API 获取的值，都不需要用户填写。** 用户只需在第 1 组中为**一种**后端填写凭据（1–2 项）；第 2 组已有可用默认值；第 3 组保留键名但值留空，留空即按当前后端的“推导规则”生成，只有需要覆盖时才填写。同名环境变量优先于文件。
 
@@ -52,8 +52,8 @@ Phase 1 代码**不读取、不使用、不发送**以下任何值；项目中�
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
-| `OBSERVABILITY_ENABLED` | `false` | OTel 总开关；P0 Gate O1 通过后再开 |
-| `CONTROL_MODE` | `off` | `off` / `remote-api`；与 OTel 开关相互独立 |
+| `OBSERVABILITY_ENABLED` | `false` | OTel 总开关（P0 Gate O1 已通过）；`scripts/run.sh --observe` 只对本次进程开启 |
+| `CONTROL_MODE` | `off` | `off` / `remote-api`；与 OTel 开关相互独立（P0 Gate C1/C2/C3 已通过）；`scripts/run.sh --control` 只对本次进程开启 |
 | `DEMO_TRACE_CONTENT` | `false` | 明确开启后才向后端发送虚构的输入/输出文本 |
 | `AO_PROJECT_NAME` / `AO_AGENT_STREAM` | `bank-agent-java` / `bank-java-demo` | 名称区分大小写，与 Golden Demo 隔离（Galileo 中称 Log Stream）。**不配置任何 ID**：应用启动时通过当前后端的 REST API 按名称查找，不存在则创建，并在内存中保存 UUID（与官方 SDK Logger 行为一致） |
 
@@ -68,12 +68,12 @@ Phase 1 代码**不读取、不使用、不发送**以下任何值；项目中�
 | `AO_OTLP_AUTH_HEADER` | `X-SF-Token`（值为 `AO_O11Y_TOKEN`） | `Galileo-API-Key`（值为 `AO_API_KEY`） | SDK / G-SDK `otel.py` |
 | `OTEL_SERVICE_NAME` | `bank-agent-java` | 同左 | 本项目 |
 | `AGENT_CONTROL_URL` | `https://app.${AO_REALM}.observability.splunkcloud.com/ao/agent-control` | `${AO_CONSOLE_URL}/api/agent-control`，如 `https://app.galileo.ai/api/agent-control`、`https://console.multitenant.galileocloud.io/api/agent-control`（GD 实测）。Galileo 专属环境若提供 `https://agent-control.<env>.galileo.ai`（G-Docs），在此覆盖 | Docs / GD / G-Docs |
-| `AGENT_CONTROL_EVALUATION_PATH` | P0 验证出的路由，作为应用内置默认值 | 同左 | P0 |
+| `AGENT_CONTROL_EVALUATION_PATH` | `/api/v1/evaluation`（P0 实测） | 同左（未在线验证） | P0 |
 | `AGENT_CONTROL_API_KEY_HEADER` | `X-SF-Token` | `Galileo-API-Key`（GD 实测；G-Docs） | Docs / G-Docs |
 | `AGENT_CONTROL_API_KEY` | 使用 `AO_O11Y_TOKEN` | 使用 `AO_API_KEY` | Docs / GD |
 | `AGENT_CONTROL_AGENT_NAME` | `bank-agent-java`；若需注册 Agent，由应用自动注册或查找 | 同左 | 本项目 |
 | `AGENT_CONTROL_TARGET_TYPE` | `log_stream` | `log_stream` | Docs / G-Docs / SDK |
-| `AGENT_CONTROL_RUNTIME_AUTH_MODE` / `AGENT_CONTROL_RUNTIME_TOKEN_HEADER` | `jwt` / `X-Agent-Control-Runtime-Token`；Java 是否需要运行时 Token 交换由 P0 确定 | 同左 | Docs / G-Docs |
+| `AGENT_CONTROL_RUNTIME_AUTH_MODE` / `AGENT_CONTROL_RUNTIME_TOKEN_HEADER` | `jwt` / `X-Agent-Control-Runtime-Token`。P0 实测：评估接口**必须**带 Runtime Token（只带 `X-SF-Token` 返回 401 `AUTH_MISSING_KEY`）；应用启动时自动调用 `/api/v1/auth/runtime-token-exchange`，过期前刷新 | 同左（未在线验证） | Docs / G-Docs / P0 |
 | `CONTROL_READ_FAILURE_MODE` / `CONTROL_WRITE_FAILURE_MODE` | `fail-open` / `fail-closed` | 同左 | Phase 2 任务书 |
 | `MAX_CONTROL_STEER_RETRIES` | `2` | 同左 | Phase 2 任务书 |
 
@@ -98,7 +98,14 @@ Phase 1 代码**不读取、不使用、不发送**以下任何值；项目中�
 - `https://app.galileo.ai/api/agent-control/health`、`https://console.multitenant.galileocloud.io/api/agent-control/health` 为 `200`（`healthy`，`8.15.0`）；随机路径为 `404`。选项 C 的 Agent Control 注册与 Project/Log Stream 查询已在 Golden Demo 中用真实 Key 验收（见其 `documentation/VALIDATION.md`）。
 - Galileo 公开 OpenAPI 声明接受 `Galileo-API-Key` 与 `Splunk-AO-API-Key` 两种 API Key 请求头，项目接口为 `/v2/projects`、`/v2/projects/paginated`、`/v2/projects/{project_id}/log_streams`。
 
-仍待 P0 验证：真实 Span 在 Console 中的 Project/Agent Stream 路由、创建接口、Control 评估与事件接口。
+### 2.7 Phase 2 P0 与在线验收结论（选项 A，`au0`）
+
+- OTLP：`/v2/trace/otlp` + `X-SF-Token` + 请求头 `project` / `logstream`（以及 Resource 属性 `splunk_ao.project.name` / `splunk_ao.logstream.name`）路由正确；使用 `agentstream` 会进入自动创建的 “Unassigned” Stream。
+- 创建接口：`POST /ao/api/projects`（重复名称 422）、`POST /ao/api/projects/{id}/log_streams`（重复名称 400）已实测，应用按“查找 → 不存在才创建 → 冲突则重新查找”执行。
+- Agent Control：`/health`、`initAgent`、`runtime-token-exchange`、`/api/v1/evaluation`、按 Agent 查询绑定规则均已实测；Control 结果通过 OTLP control span 上报，Console Controls 标签显示详情。
+- 选项 B/C（`galileo`）：推导规则已实现并有离线测试，**未在线验证**。
+
+详见 [`PHASE2-PROTOCOL-VERIFICATION.md`](PHASE2-PROTOCOL-VERIFICATION.md) 与 [`PHASE2-VALIDATION.md`](PHASE2-VALIDATION.md)。
 
 ## 3. 未复制的 Golden Demo 配置
 
@@ -109,5 +116,5 @@ Phase 1 代码**不读取、不使用、不发送**以下任何值；项目中�
 - 私有文件位于仓库与 OneDrive 同步目录之外；仓库 `.gitignore` 忽略 `.env*`、`*secrets*`（模板除外）、`config/*.properties`（模板除外）、日志、数据库与 `target/`。
 - 脚本（`scripts/preflight.sh`）只报告"密钥是否存在"（布尔），从不打印密钥值；`/api/status` 只返回 `llmConfigured: true/false`。
 - 日志通过 `SecretMasker` 遮蔽 `sk-...`、`Bearer ...` 等模式；默认关闭 OpenAI 请求/响应全文日志。
-- 离线测试强制 `OPENAI_API_KEY=""` 并把 `BANK_AGENT_SECRETS_FILE` 指向不存在的文件，确保测试不读取私有配置、不调用真实 API。
+- 离线测试强制 `OPENAI_API_KEY=""`，把 `BANK_AGENT_SECRETS_FILE`、`BANK_AGENT_GALILEO_FILE` 指向不存在的文件，并清空全部 `AO_*` / `AGENT_CONTROL_*` 凭据、强制 Phase 2 开关关闭，确保测试不读取私有配置、不调用真实 API。
 - Golden Demo 原文件在开始前记录了 SHA-256 基线，结束时复核未变（见 `docs/PHASE1-VALIDATION.md`，A09）。

@@ -14,9 +14,9 @@
 
     <groupId>com.demo</groupId>
     <artifactId>bank-agent-java</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.2.0-SNAPSHOT</version>
     <name>bank-agent-java</name>
-    <description>Banking AI Agent (Java) - Phase 1 local demo (simulated banking only)</description>
+    <description>Banking AI Agent (Java) - local demo (simulated banking only) with Phase 2 OpenTelemetry Observe and Agent Control</description>
 
     <properties>
         <java.version>21</java.version>
@@ -75,9 +75,43 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!--
+            Phase 2 Observe: official OpenTelemetry Java API/SDK + OTLP/HTTP exporter. The version (1.49.0)
+            is managed by the Spring Boot 3.5.16 BOM, so no override is needed. The JDK HttpClient sender
+            replaces the default OkHttp sender: no OkHttp/Kotlin jars, and the JVM trust store prepared by
+            scripts/run.sh applies to OTLP export exactly as it does to OpenAI calls.
+        -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>io.opentelemetry</groupId>
+                    <artifactId>opentelemetry-exporter-sender-okhttp</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-sender-jdk</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-testing</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -100,13 +134,28 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <!-- Tests are fully offline: never load the private secrets file or a real API key. -->
+                    <!-- Tests are fully offline: never load the private secrets / galileo files, a real API key or AO credentials. -->
                     <environmentVariables>
                         <OPENAI_API_KEY></OPENAI_API_KEY>
                         <BANK_AGENT_SECRETS_FILE>/nonexistent/bank-agent-test-secrets.properties</BANK_AGENT_SECRETS_FILE>
+                        <BANK_AGENT_GALILEO_FILE>/nonexistent/bank-agent-test-galileo.properties</BANK_AGENT_GALILEO_FILE>
+                        <OBSERVABILITY_ENABLED>false</OBSERVABILITY_ENABLED>
+                        <CONTROL_MODE>off</CONTROL_MODE>
+                        <DEMO_TRACE_CONTENT>false</DEMO_TRACE_CONTENT>
+                        <AO_BACKEND_PROFILE></AO_BACKEND_PROFILE>
+                        <AO_REALM></AO_REALM>
+                        <AO_O11Y_TOKEN></AO_O11Y_TOKEN>
+                        <AO_O11Y_API_TOKEN></AO_O11Y_API_TOKEN>
+                        <AO_API_KEY></AO_API_KEY>
+                        <AO_CONSOLE_URL></AO_CONSOLE_URL>
+                        <AO_API_URL></AO_API_URL>
+                        <AO_OTLP_ENDPOINT></AO_OTLP_ENDPOINT>
+                        <AGENT_CONTROL_URL></AGENT_CONTROL_URL>
+                        <AGENT_CONTROL_API_KEY></AGENT_CONTROL_API_KEY>
                     </environmentVariables>
                     <systemPropertyVariables>
                         <BANK_AGENT_SECRETS_FILE>/nonexistent/bank-agent-test-secrets.properties</BANK_AGENT_SECRETS_FILE>
+                        <BANK_AGENT_GALILEO_FILE>/nonexistent/bank-agent-test-galileo.properties</BANK_AGENT_GALILEO_FILE>
                         <OPENAI_API_KEY></OPENAI_API_KEY>
                     </systemPropertyVariables>
                 </configuration>
@@ -127,9 +176,24 @@
                     <environmentVariables>
                         <OPENAI_API_KEY></OPENAI_API_KEY>
                         <BANK_AGENT_SECRETS_FILE>/nonexistent/bank-agent-test-secrets.properties</BANK_AGENT_SECRETS_FILE>
+                        <BANK_AGENT_GALILEO_FILE>/nonexistent/bank-agent-test-galileo.properties</BANK_AGENT_GALILEO_FILE>
+                        <OBSERVABILITY_ENABLED>false</OBSERVABILITY_ENABLED>
+                        <CONTROL_MODE>off</CONTROL_MODE>
+                        <DEMO_TRACE_CONTENT>false</DEMO_TRACE_CONTENT>
+                        <AO_BACKEND_PROFILE></AO_BACKEND_PROFILE>
+                        <AO_REALM></AO_REALM>
+                        <AO_O11Y_TOKEN></AO_O11Y_TOKEN>
+                        <AO_O11Y_API_TOKEN></AO_O11Y_API_TOKEN>
+                        <AO_API_KEY></AO_API_KEY>
+                        <AO_CONSOLE_URL></AO_CONSOLE_URL>
+                        <AO_API_URL></AO_API_URL>
+                        <AO_OTLP_ENDPOINT></AO_OTLP_ENDPOINT>
+                        <AGENT_CONTROL_URL></AGENT_CONTROL_URL>
+                        <AGENT_CONTROL_API_KEY></AGENT_CONTROL_API_KEY>
                     </environmentVariables>
                     <systemPropertyVariables>
                         <BANK_AGENT_SECRETS_FILE>/nonexistent/bank-agent-test-secrets.properties</BANK_AGENT_SECRETS_FILE>
+                        <BANK_AGENT_GALILEO_FILE>/nonexistent/bank-agent-test-galileo.properties</BANK_AGENT_GALILEO_FILE>
                         <OPENAI_API_KEY></OPENAI_API_KEY>
                     </systemPropertyVariables>
                 </configuration>

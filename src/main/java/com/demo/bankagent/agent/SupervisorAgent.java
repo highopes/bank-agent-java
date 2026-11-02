@@ -1,30 +1,50 @@
 package com.demo.bankagent.agent;
 
 import com.demo.bankagent.conversation.Conversation;
+import com.demo.bankagent.observability.AgentSpanRunner;
+import com.demo.bankagent.observability.BankTelemetry;
+import com.demo.bankagent.observability.GenAiAttributes;
+import com.demo.bankagent.observability.TraceContentPolicy;
 import com.demo.bankagent.trace.AgentStepTrace;
 import com.demo.bankagent.trace.ExecutionTrace;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.context.Scope;
 import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
  * Supervisor: asks the LLM router which agents are needed, delegates the self-contained tasks
  * sequentially and aggregates the answers. Clear boundaries (route / delegate / aggregate) make this
- * class the natural root for Phase 2 instrumentation.
+ * class the natural root for Phase 2 instrumentation: an "invoke_agent SupervisorAgent" span contains the router's
+ * LLM span and one span per delegated domain agent.
  */
 @Component
 public class SupervisorAgent {
 
     private static final Logger log = LoggerFactory.getLogger(SupervisorAgent.class);
+    static final String SPAN_AGENT_NAME = "SupervisorAgent";
 
     private final IntentRouter router;
     private final DomainAgentGateway gateway;
+    private final AgentSpanRunner spans;
 
+    /** Unit tests: no telemetry. */
     public SupervisorAgent(IntentRouter router, DomainAgentGateway gateway) {
+        this(router, gateway, new AgentSpanRunner(BankTelemetry.noop(),
+                new TraceContentPolicy(false, 2000, new ObjectMapper())));
+    }
+
+    @Autowired
+    public SupervisorAgent(IntentRouter router, DomainAgentGateway gateway, AgentSpanRunner spans) {
         this.router = router;
         this.gateway = gateway;
+        this.spans = spans;
     }
 
     public record SupervisorResult(String intent, List<String> selectedAgents, String answer,
@@ -32,9 +52,28 @@ public class SupervisorAgent {
     }
 
     public SupervisorResult handle(String conversationId, String message, List<Conversation.Turn> history) {
+        Span span = spans.startAgent(SPAN_AGENT_NAME, conversationId, message);
+        try (Scope ignored = span.makeCurrent()) {
+            SupervisorResult result = route(conversationId, message, history, span);
+            span.setAttribute(GenAiAttributes.BANK_INTENT, result.intent());
+            span.setAttribute(AttributeKey.stringArrayKey(GenAiAttributes.BANK_SELECTED_AGENTS),
+                    result.selectedAgents());
+            spans.setOutput(span, result.answer());
+            return result;
+        } catch (RuntimeException e) {
+            AgentSpanRunner.recordFailure(span, e);
+            throw e;
+        } finally {
+            span.end();
+        }
+    }
+
+    private SupervisorResult route(String conversationId, String message, List<Conversation.Turn> history,
+                                   Span span) {
         RoutingDecision decision = router.route(message, history);
         log.info("Supervisor decision conversation={} intent={} agents={} fallback={}", conversationId,
                 decision.intent(), decision.steps().stream().map(s -> s.agent().name()).toList(), decision.fallback());
+        span.setAttribute(GenAiAttributes.BANK_ROUTE_FALLBACK, decision.fallback());
         if (decision.intent() != RoutingDecision.Intent.AGENTS) {
             return new SupervisorResult(decision.intent().name(), List.of(), decision.reply(), decision);
         }

@@ -1,7 +1,9 @@
 package com.demo.bankagent.agent;
 
 import com.demo.bankagent.config.BankAgentProperties;
+import com.demo.bankagent.control.StepCatalog;
 import com.demo.bankagent.conversation.Conversation;
+import com.demo.bankagent.governance.StepGovernance;
 import com.demo.bankagent.llm.LlmErrorTranslator;
 import com.demo.bankagent.trace.ExecutionTrace;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -43,8 +45,10 @@ public class LlmIntentRouter implements IntentRouter {
     private final ObjectMapper objectMapper;
 
     public LlmIntentRouter(ChatModel chatModel, AgentPrompts prompts, BankAgentProperties properties,
-                           ObjectMapper objectMapper) {
-        this.chatModel = chatModel;
+                           ObjectMapper objectMapper, StepGovernance governance) {
+        // Phase 2: the router's model calls get the LLM span + Control of step "supervisor-router". This is the
+        // only LLM span for the call: no second span is created here.
+        this.chatModel = governance.governChatModel(chatModel, StepCatalog.SUPERVISOR_ROUTER);
         this.prompts = prompts;
         this.properties = properties;
         this.objectMapper = objectMapper;
