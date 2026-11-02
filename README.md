@@ -175,9 +175,9 @@ bank-agent-java/
 ├── pom.xml / mvnw / mvnw.cmd / .mvn/ Maven Wrapper 构建
 ├── config/                           不含密钥的配置模板
 │   ├── application-secrets.example.properties
-│   └── galileo.future.example.properties
+│   └── galileo.example.properties     Phase 2 观测后端配置模板（Splunk AO SaaS 或 Galileo，每种后端只填 1–2 项）
 ├── docs/
-│   ├── CONFIG-MAPPING.md             Golden Demo → 本项目 配置键映射（不含值）
+│   ├── CONFIG-MAPPING.md             配置键映射、来源与推导规则（不含值）
 │   └── PHASE1-VALIDATION.md          Phase 1 验收记录
 ├── scripts/                          preflight / run / stop / test / reset-demo（lib/common.sh 公共函数）
 └── src/
@@ -225,14 +225,14 @@ scripts/preflight.sh     # 检查 macOS、Java 21、Wrapper、端口、私有配
 ### 6.2 安全复用 Golden Demo Credentials
 
 - 只读审阅了 `splunk-ao-golden-demo` 的 `.streamlit/secrets.toml`、`domains/bank/config.yaml` 和 `setup_env.py`，**未修改原项目**。
-- 原项目 `openai_api_key` 属于 **OpenAI 官方 API**（已用真实调用验证），被复制到本机私有文件：
+- 原项目 `openai_api_key` 属于 **OpenAI 官方 API**（已用真实调用验证），被复制到本机私有文件。Phase 2 的观测后端默认改为 Splunk Observability Cloud 集成的 Splunk AO SaaS，其配置不再从 Golden Demo 复制；如需改用 Golden Demo 所用的 Galileo 多租户云或传统的 `app.galileo.ai`，按 `galileo.properties` 第 1 组注释切换即可（见第 13 节与 `docs/CONFIG-MAPPING.md`）：
 
   ```text
-  ~/.config/bank-agent-java/application-secrets.properties   (目录 0700，文件 0600)
-  ~/.config/bank-agent-java/galileo.future.properties        (0600，标记 RESERVED_FOR_PHASE_2_3)
+  ~/.config/bank-agent-java/application-secrets.properties   (目录 0700，文件 0600，OpenAI 配置)
+  ~/.config/bank-agent-java/galileo.properties               (0600，Phase 2 的观测后端 / Agent Control 配置)
   ```
 
-- 两个文件都在仓库与 OneDrive 同步目录**之外**。应用通过 `spring.config.import=optional:file:${BANK_AGENT_SECRETS_FILE}` 读取第一个文件；**Phase 1 代码不读取 `galileo.future.properties`**。
+- 两个文件都在仓库与 OneDrive 同步目录**之外**。应用通过 `spring.config.import=optional:file:${BANK_AGENT_SECRETS_FILE}` 读取第一个文件；**Phase 1 代码不读取 `galileo.properties`**。
 - 仓库只包含模板 `config/*.example.properties` 与键名映射 `docs/CONFIG-MAPPING.md`；`.gitignore` 忽略 `.env*`、`*secrets*`（模板除外）、`config/*.properties`（模板除外）、日志与数据库文件。
 - 在另一台机器上从零配置：
 
@@ -242,6 +242,11 @@ scripts/preflight.sh     # 检查 macOS、Java 21、Wrapper、端口、私有配
   chmod 600 ~/.config/bank-agent-java/application-secrets.properties
   # 用编辑器填入 OPENAI_API_KEY（不要在终端 echo 密钥）
   open -e ~/.config/bank-agent-java/application-secrets.properties
+
+  # Phase 2 用：按文件第 1 组注释为一种后端填写凭据（默认 Splunk AO SaaS：AO_REALM、AO_O11Y_TOKEN），其余键留空即自动推导
+  cp config/galileo.example.properties ~/.config/bank-agent-java/galileo.properties
+  chmod 600 ~/.config/bank-agent-java/galileo.properties
+  open -e ~/.config/bank-agent-java/galileo.properties
   ```
 
 ### 6.3 OpenAI 模型与 API 配置
@@ -415,7 +420,20 @@ scripts/test.sh        # 等价于 ./mvnw -B clean verify（项目内选择 Java
   - 未实现多币种、多客户、定时转账、真实银行接口。
 
 ## 13. Phase 2 — Galileo OpenTelemetry Instrumentation
-> Reserved. Not implemented in Phase 1.
+> 尚未实施。Phase 2 完成后将以完整说明替换本节；以下仅为已完成的配置准备（2026-11-02）。
+
+- **私有配置**：`~/.config/bank-agent-java/galileo.properties`（`0600`），模板为 `config/galileo.example.properties`。文件第 1 组列出三种后端，用户只为其中**一种**填写凭据；Console、API、OTLP、Agent Control 的地址与认证头等键保留但留空，留空时按该后端官方文档与官方 SDK 的规则自动推导，需要时才填写覆盖。
+
+  | 后端 | Console | 配置档 | 需填写 |
+  |---|---|---|---|
+  | Splunk AO SaaS（Splunk Observability Cloud，**当前默认**，本机 realm `au0`） | `https://app.<realm>.observability.splunkcloud.com/` | `o11y` | `AO_REALM`、`AO_O11Y_TOKEN`（请求头 `X-SF-Token`） |
+  | Galileo SaaS（传统） | `https://app.galileo.ai/` | `galileo` | `AO_API_KEY`（请求头 `Galileo-API-Key`） |
+  | Galileo 多租户云（Golden Demo 使用） | `https://console.multitenant.galileocloud.io/<tenant>` | `galileo` | `AO_API_KEY`、`AO_CONSOLE_URL=https://console.multitenant.galileocloud.io`（只填根地址，不含 `/splunkse` 等租户路径） |
+
+- **切换后端**：填写新后端对应的键，并把 `AO_BACKEND_PROFILE` 设为 `o11y` 或 `galileo`（只填一种后端时可留空，自动判断）。其他推导键继续留空即可，Project / Agent Stream 会在新后端上自动创建。两类后端的凭据不通用。
+- **Project / Agent Stream**：只配置名称（默认 `bank-agent-java` / `bank-java-demo`），不配置 ID。Phase 2 插桩在启动时通过当前后端的 REST API 按名称查找，不存在则自动创建，并获取 UUID；Agent Control 的目标 ID 就是该 Agent Stream 的 UUID，同样无需配置。
+- **开关**：`OBSERVABILITY_ENABLED=false`、`CONTROL_MODE=off`，在 Phase 2 的 P0 协议验证通过前保持关闭。
+- 完整键名、推导规则、来源与 Token 只读验证结果见 [`docs/CONFIG-MAPPING.md`](docs/CONFIG-MAPPING.md)。
 
 ## 14. Phase 3 — Galileo Evaluation & Customer Demo Guide
 > Reserved. Not implemented in Phase 1.
@@ -423,7 +441,7 @@ scripts/test.sh        # 等价于 ./mvnw -B clean verify（项目内选择 Java
 ## 15. Roadmap
 
 - **Phase 1（本阶段，已完成）**：Java 21 / Spring Boot / LangChain4j 多 Agent 银行助理、真实 OpenAI Tool Calling、H2 模拟银行、人工确认转账、离线测试与在线验收。
-- **Phase 2（待实施）**：在 Supervisor、领域 Agent、Tool、LLM 调用点增加 OpenTelemetry/Galileo 插桩；所需配置键已记录在 `docs/CONFIG-MAPPING.md`，真实值仅在 `~/.config/bank-agent-java/galileo.future.properties`，OTLP 端点需在 Phase 2 验证后再确定。
+- **Phase 2（待实施，配置已准备）**：在 Supervisor、领域 Agent、Tool、LLM 调用点增加 OpenTelemetry 插桩，并以 Java REST Adapter 集成 Agent Control；配置位于 `~/.config/bank-agent-java/galileo.properties`（见第 13 节与 `docs/CONFIG-MAPPING.md`）。OTLP 端点已按官方规则由 realm 推导并通过 Token 只读验证，真实 Span 的 Console 路由与 Control 接口仍待 Phase 2 P0 验证。
 - **Phase 3（待实施）**：Galileo 评估与客户演示指南。
 
 ## 16. 参考资料与开源项目来源

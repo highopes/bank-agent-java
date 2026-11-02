@@ -123,7 +123,7 @@ shasum -a 256 -c <baseline>             # 在 Golden Demo 目录核对原文件�
 | A09 | Golden Demo 未修改 | 开始前对 6 个读取过的文件（`.streamlit/secrets.toml`、`.streamlit/config.toml`、`.streamlit/secrets.toml.example`、`domains/bank/config.yaml`、`setup_env.py`、`helpers/llm_utils.py`）记录 SHA-256；结束时 `shasum -c` 全部 OK；`git status --porcelain` 为空 | Passed |
 | A10 | 私有配置安全，无密钥进入仓库/日志/文档 | 私有文件在仓库与 OneDrive 之外（0700/0600）；对仓库（含 `target/`）、运行日志和会话笔记按真实密钥值逐字扫描，0 命中；仅测试中有虚构的 `sk-proj-ABC…` 用于验证遮蔽；`.gitignore` 规则经 `git check-ignore` 验证 | Passed |
 | A11 | README 完整且可复现 | README 包含 §8 要求的全部章节；在本机按 README 命令执行了 preflight → reset → run → health/UI/chat → reset → stop | Passed（本机）；第三方从零 clone 复现见第 6 节 |
-| A12 | 无 Galileo/OTel 依赖与发送逻辑 | `./mvnw dependency:tree` 中 opentelemetry/galileo 为 0 条；代码中只有一处注释提到"Phase 2 可替换为 span"；运行日志 0 处；Phase 1 不读取 `galileo.future.properties` | Passed |
+| A12 | 无 Galileo/OTel 依赖与发送逻辑 | `./mvnw dependency:tree` 中 opentelemetry/galileo 为 0 条；代码中只有一处注释提到"Phase 2 可替换为 span"；运行日志 0 处；Phase 1 不读取 `galileo.future.properties`（2026-11-02 起更名为 `galileo.properties`） | Passed |
 
 ## 6. Blocked / Not Verified
 
