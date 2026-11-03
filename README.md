@@ -2,7 +2,7 @@
 
 > **DEMO ACCOUNT · Demo / Simulated Banking**：本项目中的客户、账户、交易与收款人全部为虚构数据，所有"转账"只是本地 H2 数据库中的模拟记账，不连接任何真实银行系统。
 
-`bank-agent-java` 是一个在 macOS 本机运行的 Java 多 Agent 银行助理，并接入了 Galileo（默认后端为 Splunk Observability Cloud 中的 Splunk AO SaaS）的可观测与运行时管控。内容分为三部分：
+很多企业级AI Agent都采用Java开发，特别是金融领域，而Splunk Agent Observability（Galileo）官方没有提供完全基于Java和OpenTelemetry实现Instrumentation的演示，因此开发了本项目。本项目的`bank-agent-java` 是一个在 macOS 本机运行的 Java 多 Agent 银行助理，并接入了 Galileo（默认后端为 Splunk Observability Cloud 中的 Splunk AO SaaS）的可观测与运行时管控。内容分为三部分：
 
 | 部分 | 内容 | README 章节 | 详细文档 |
 |---|---|---|---|
