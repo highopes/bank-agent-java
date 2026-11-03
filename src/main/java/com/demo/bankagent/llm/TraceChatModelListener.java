@@ -13,7 +13,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Records every real chat-model round trip (model, token usage, latency) into the request's
- * ExecutionTrace. It never logs prompt or completion text. This is a natural Phase 2 hook point.
+ * ExecutionTrace. It never logs prompt or completion text. It only fires after a call, so LLM spans and LLM
+ * Control are done by GovernedChatModel, which wraps the model and runs before the call.
  */
 public class TraceChatModelListener implements ChatModelListener {
 

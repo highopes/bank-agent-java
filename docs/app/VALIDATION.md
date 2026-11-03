@@ -1,7 +1,9 @@
-# Phase 1 验收记录（PHASE1-VALIDATION）
+# 银行 AI 应用验收记录
+
+本文记录银行 AI 应用本身（多 Agent、OpenAI Tool Calling、模拟银行、人工确认转账）的验收结果。验收在加入 Galileo 插桩之前完成，对象是当时的应用版本；插桩加入后，这些业务行为在两个 Galileo 开关关闭和开启时都重新回归过，见 [`../galileo/VALIDATION.md`](../galileo/VALIDATION.md)。演示时如何使用这些业务场景，见 [`../demo/DEMO-GUIDE.md`](../demo/DEMO-GUIDE.md)。
 
 - 项目：`bank-agent-java`（`/Users/hangwe/Library/CloudStorage/OneDrive-Cisco/dev/bank-agent-java`）
-- 验收日期：2026-11-01（Asia/Shanghai）
+- 验收日期：2026-11-01（Asia/Shanghai），Galileo 插桩之前的应用版本
 - 环境：macOS 27.0.1（arm64），Temurin OpenJDK 21+35-LTS（SDKMAN `21-tem`），Maven Wrapper → Maven 3.9.16
 - 版本：Spring Boot 3.5.16，LangChain4j 1.23.0，H2 2.3.232
 - 模型：`gpt-5-nano`（OpenAI 官方 API，实际返回 `gpt-5-nano-2025-08-07`），`reasoning_effort=low`
@@ -19,22 +21,22 @@ curl -s http://127.0.0.1:8080/api/status
 curl -s -X POST http://127.0.0.1:8080/api/chat -H 'Content-Type: application/json' -d '{"message":"..."}'
 curl -s -X POST http://127.0.0.1:8080/api/payments/drafts/<draftId>/confirm -H 'Content-Type: application/json' -d '{"conversationId":"..."}'
 scripts/stop.sh
-./mvnw -B dependency:tree               # 检查无 OpenTelemetry / Galileo 依赖
+./mvnw -B dependency:tree               # 确认当时的版本没有 OpenTelemetry / Galileo 依赖
 shasum -a 256 -c <baseline>             # 在 Golden Demo 目录核对原文件未变
 ```
 
 ## 2. 离线自动化测试（`scripts/test.sh` = `./mvnw -B clean verify`）
 
-结果：**BUILD SUCCESS，49 个测试，0 失败，0 错误，0 跳过**。
+结果：**BUILD SUCCESS，49 个测试，0 失败，0 错误，0 跳过**。这 49 个测试在加入 Galileo 插桩后没有修改，仍全部通过；当前全量测试共 105 个，见 README「自动化测试」。
 
 - Surefire 单元测试：15 个（`AmountMentionsTest`、`AmountParserTest`、`SupervisorAgentTest`、`DemoControllerLoopbackTest`、`LlmSafetyUnitTest`）
 - Failsafe 集成测试：34 个（`BankingServicesIT`、`PaymentServiceIT`、`LlmIntentRouterIT`、`AgentFlowIT`、`ApiControllersIT`）
 
 测试隔离：`OPENAI_API_KEY=""`、`BANK_AGENT_SECRETS_FILE=/nonexistent/...`、内存 H2、固定时钟；`ScriptedChatModel` 只替换 OpenAI 网络调用，LangChain4j AiServices、`@Tool` 方法、Service 与 H2 都是真实执行。
 
-§7.1 必测项对应关系：
+必测项对应关系：
 
-| §7.1 要求 | 覆盖测试 |
+| 要求 | 覆盖测试 |
 |---|---|
 | 编译与单元测试成功，Java 21 可运行 | `clean verify` 全部通过 |
 | 余额读取、交易查询、消费聚合数值正确 | `BankingServicesIT`（上月消费 10,689.00、购物 4,878.00、排除转账 1,000.00；倒序；月初凌晨无未来交易） |
@@ -47,11 +49,13 @@ shasum -a 256 -c <baseline>             # 在 Golden Demo 目录核对原文件�
 | 健康检查 | `ApiControllersIT`（`/actuator/health`） |
 | UI Controller 基础测试 | `ApiControllersIT`（`GET /` 渲染、无密钥）、`DemoControllerLoopbackTest` |
 
-## 3. 真实 OpenAI 在线验收（§7.2）
+## 3. 真实 OpenAI 在线验收
 
 条件：使用从 Golden Demo 复用的 OpenAI 官方 API 凭据（仅存放于私有文件），真实 HTTP API 调用，**未使用 Stub**。证据取自 `/api/chat` 响应中的真实执行记录（`selectedAgents`、`toolCalls`、`llmCalls` 中的模型名与 token 用量），由后端 `ExecutionTrace` 与 LangChain4j `ChatModelListener` 采集。
 
-### 3.1 九个演示问题（同一会话，2026-11-01 约 14:00）
+### 3.1 九个业务问题（同一会话，2026-11-01 约 14:00）
+
+这 9 个问题也是 UI 左侧的示例问题，并被用作演示脚本第一、二幕的素材。
 
 | # | 问题 | 路由 Agent | 实际 Tool | 耗时 ms | LLM 调用 | Token 入/出 | 预期 | 实际 | 结论 |
 |---|---|---|---|---|---|---|---|---|---|
@@ -79,7 +83,7 @@ shasum -a 256 -c <baseline>             # 在 Golden Demo 目录核对原文件�
 | "按刚才那个金额再给李四转一次"（模型自行补出 999999） | 金额守卫拒绝 `AMOUNT_NOT_STATED_BY_USER`，已审计，无草稿 | Passed |
 | 审计表 | 12 条记录，覆盖创建/拒绝/取消/确认/重放/不匹配 | Passed |
 
-### 3.3 最终冒烟测试（文档完成后，按 README 命令执行）
+### 3.3 最终冒烟测试（按 README 命令执行）
 
 `scripts/reset-demo.sh --yes` → `scripts/run.sh --background`（自动生成项目 truststore，3.3 秒启动）→ 以下检查 → `scripts/reset-demo.sh --yes`（运行中，经 API 重置）→ `scripts/stop.sh`。
 
@@ -108,7 +112,7 @@ shasum -a 256 -c <baseline>             # 在 Golden Demo 目录核对原文件�
 
 此外，最早一次任务执行因 AI 服务基础设施返回 `502 Could not relay message upstream` 而中断（与项目无关），只留下 `.gitignore` 和一个临时目录；已清理后从头重新执行。中断时没有发生任何 OpenAI 调用或模拟扣款。
 
-## 5. 阶段验收矩阵（§7.3）
+## 5. 验收矩阵
 
 | 编号 | 要求 | 证据 | 结论 |
 |---|---|---|---|
@@ -122,17 +126,17 @@ shasum -a 256 -c <baseline>             # 在 Golden Demo 目录核对原文件�
 | A08 | 先确认再写入，拒绝非法与重复 | Q5–Q8、第 3.2 节、`PaymentServiceIT`、`ApiControllersIT` | Passed |
 | A09 | Golden Demo 未修改 | 开始前对 6 个读取过的文件（`.streamlit/secrets.toml`、`.streamlit/config.toml`、`.streamlit/secrets.toml.example`、`domains/bank/config.yaml`、`setup_env.py`、`helpers/llm_utils.py`）记录 SHA-256；结束时 `shasum -c` 全部 OK；`git status --porcelain` 为空 | Passed |
 | A10 | 私有配置安全，无密钥进入仓库/日志/文档 | 私有文件在仓库与 OneDrive 之外（0700/0600）；对仓库（含 `target/`）、运行日志和会话笔记按真实密钥值逐字扫描，0 命中；仅测试中有虚构的 `sk-proj-ABC…` 用于验证遮蔽；`.gitignore` 规则经 `git check-ignore` 验证 | Passed |
-| A11 | README 完整且可复现 | README 包含 §8 要求的全部章节；在本机按 README 命令执行了 preflight → reset → run → health/UI/chat → reset → stop | Passed（本机）；第三方从零 clone 复现见第 6 节 |
-| A12 | 无 Galileo/OTel 依赖与发送逻辑 | `./mvnw dependency:tree` 中 opentelemetry/galileo 为 0 条；代码中只有一处注释提到"Phase 2 可替换为 span"；运行日志 0 处；Phase 1 不读取 `galileo.future.properties`（2026-11-02 起更名为 `galileo.properties`） | Passed |
+| A11 | README 完整且可复现 | README 包含目标、架构、安装配置、运行、API、数据、测试、排障与安全等章节；在本机按 README 命令执行了 preflight → reset → run → health/UI/chat → reset → stop | Passed（本机）；第三方从零 clone 复现见第 6 节 |
+| A12 | 验收版本中没有 Galileo/OTel 依赖与发送逻辑（作为插桩前的业务基线） | `./mvnw dependency:tree` 中 opentelemetry/galileo 为 0 条；运行日志 0 处；当时不读取 Galileo 配置文件。加入插桩后，两个 Galileo 开关关闭时同样不发送任何数据，见 `ControlDisabledRegressionIT` 与 [`../galileo/VALIDATION.md`](../galileo/VALIDATION.md) | Passed |
 
 ## 6. Blocked / Not Verified
 
 | 项目 | 状态 | 说明 |
 |---|---|---|
-| 第三方在另一台干净 Mac 上从零 clone 并按 README 复现 | Not Verified | 只在本机验证（JDK 21 已存在、`~/.m2` 已缓存依赖）。新机器需要按 README 6.1/6.2 准备 JDK 21 与私有配置文件 |
+| 第三方在另一台干净 Mac 上从零 clone 并按 README 复现 | Not Verified | 只在本机验证（JDK 21 已存在、`~/.m2` 已缓存依赖）。新机器需要按 README「安装与本地配置」准备 JDK 21 与私有配置文件 |
 | 浏览器内人工点击操作的录屏/截图 | Not Verified（以 HTTP 等价验证替代） | UI 页面的渲染（`GET /`）与 UI 按钮调用的同一 REST 接口（confirm/cancel/reset）均已真实调用验证；未通过自动化浏览器逐一点击 |
 | 非企业网络（无 TLS 检查）下的启动 | Not Verified | 本机处于 Cisco Secure Access TLS 检查网络；`BANK_AGENT_TRUSTSTORE=none` 路径未在无检查网络中实测 |
-| 其他 OpenAI 模型（如 `gpt-5-mini`、`gpt-4.1-mini`） | Not Verified | 按用户要求只验证了低成本默认模型 `gpt-5-nano`；切换方法见 README 6.3 |
-| 长时间运行、并发压力 | Not Verified | 不在 Phase 1 范围；同一会话的并发请求按设计返回 `409 CONVERSATION_BUSY`，但未做压力测试 |
+| 其他 OpenAI 模型（如 `gpt-5-mini`、`gpt-4.1-mini`） | Not Verified | 按用户要求只验证了低成本默认模型 `gpt-5-nano`；切换方法见 README「OpenAI 模型与 API 配置」 |
+| 长时间运行、并发压力 | Not Verified | 不在验收范围；同一会话的并发请求按设计返回 `409 CONVERSATION_BUSY`，但未做压力测试 |
 
 没有任何必测项因凭据缺失、权限不足或网络不通而被阻塞。

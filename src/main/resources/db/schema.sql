@@ -1,4 +1,4 @@
--- Simulated banking schema for the Phase 1 demo. All data is fictional.
+-- Simulated banking schema for the demo. All data is fictional.
 CREATE TABLE IF NOT EXISTS demo_customer (
     id            VARCHAR(32)  PRIMARY KEY,
     display_name  VARCHAR(100) NOT NULL,

@@ -25,11 +25,11 @@ import org.springframework.stereotype.Component;
  * /evaluation endpoint is evaluation-only and records no Control event by itself (agent-control
  * evaluation_events.py rebuilds events client-side).
  *
- * <p>Event channel (P0, docs/PHASE2-PROTOCOL-VERIFICATION.md): the official Splunk AO Python SDK turns every
+ * <p>Event channel (protocol verification, docs/galileo/PROTOCOL-VERIFICATION.md): the official Splunk AO Python SDK turns every
  * ControlExecutionEvent into a "control span" (splunk_ao handlers/agent_control/bridge.py -&gt; add_control_span)
  * and exports it via OTLP with galileo.span.kind=control and agent_control.* attributes
  * (converter/attribute_mapping.set_control_attributes). This class emits the same span, as a child of the
- * evaluated step's span, for every match / non-match / error returned by the server. P0 verified that AO stores it
+ * evaluated step's span, for every match / non-match / error returned by the server. Protocol verification showed that AO stores it
  * as a native control span and the Console shows it in the span's Controls tab. Without Observe there is no
  * supported channel; that state is reported as EVENT_INGEST_UNAVAILABLE and nothing is faked.
  */
@@ -59,7 +59,7 @@ public class ControlEventReporter {
             return EVENT_INGEST_UNAVAILABLE + " (OBSERVABILITY_ENABLED=false: control spans cannot be exported)";
         }
         return settings.profile() == AoBackendProfile.O11Y
-                ? "OTLP control spans (verified in P0 for profile o11y)"
+                ? "OTLP control spans (verified for profile o11y)"
                 : "OTLP control spans (same contract; not verified online for profile galileo)";
     }
 

@@ -1,6 +1,6 @@
-# Phase 2 Agent Control：Java REST Adapter
+# Agent Control：Java REST Adapter（Galileo 插桩）
 
-本文说明 Java 应用如何使用 Splunk AO 的 Agent Control：规则在 Console（服务端）定义，**执行门禁由 Java 实现**。协议细节与原始验证记录见 [`PHASE2-PROTOCOL-VERIFICATION.md`](PHASE2-PROTOCOL-VERIFICATION.md)，在线验收见 [`PHASE2-VALIDATION.md`](PHASE2-VALIDATION.md)。
+本文说明 Java 应用如何使用 Splunk AO 的 Agent Control：规则在 Console（服务端）定义，**执行门禁由 Java 实现**。协议细节与原始验证记录见 [`PROTOCOL-VERIFICATION.md`](PROTOCOL-VERIFICATION.md)，在线验收见 [`VALIDATION.md`](VALIDATION.md)，演示方法见 [`../demo/DEMO-GUIDE.md`](../demo/DEMO-GUIDE.md)。
 
 ## 1. 先弄清楚“谁负责什么”
 
@@ -39,9 +39,9 @@ HTTP 客户端使用 JDK 自带的 `java.net.http.HttpClient`：不增加依赖�
 | 查询已绑定规则 | `GET /api/v1/agents/{agent}/controls?target_type=log_stream&target_id=…` | `X-SF-Token` | 启动；之后最多每 5 秒刷新一次（用于跳过无规则的步骤） |
 | **评估** | `POST /api/v1/evaluation` | `X-SF-Token` **+** `X-Agent-Control-Runtime-Token`（只带前者返回 401 `AUTH_MISSING_KEY`） | 每个受控步骤的 PRE / POST |
 
-请求与响应样例见 `PHASE2-PROTOCOL-VERIFICATION.md` 第 4 节。超时与重试（`application.yml` → `bank-agent.control.*`）：连接 3 秒、请求 5 秒、评估最多 2 次尝试（只对 5xx/超时重试；评估本身没有业务副作用）、401/403 不重试，错误信息中从不包含 Token。
+请求与响应样例见 [`PROTOCOL-VERIFICATION.md`](PROTOCOL-VERIFICATION.md) 第 4 节。超时与重试（`application.yml` → `bank-agent.control.*`）：连接 3 秒、请求 5 秒、评估最多 2 次尝试（只对 5xx/超时重试；评估本身没有业务副作用）、401/403 不重试，错误信息中从不包含 Token。
 
-**Control 事件通道**：没有单独的“上报事件”接口调用。Java 把每个评估结果写成一个 **OTLP control span**（`ControlEventReporter`），挂在被检查步骤的 Span 下面，属性与官方 SDK 的 `set_control_attributes` 相同。这正是 Console Controls 标签读取的数据（P0 Gate C3 与在线截图已验证）。Observe 关闭时，决策仍然生效，但不会产生 control span。
+**Control 事件通道**：没有单独的“上报事件”接口调用。Java 把每个评估结果写成一个 **OTLP control span**（`ControlEventReporter`），挂在被检查步骤的 Span 下面，属性与官方 SDK 的 `set_control_attributes` 相同。这正是 Console Controls 标签读取的数据（协议验证检查项 C3 与在线截图已验证）。Observe 关闭时，决策仍然生效，但不会产生 control span。
 
 ## 4. 步骤目录（Console 中可选择的 step name）
 
@@ -112,7 +112,7 @@ flowchart LR
 
 ### 7.1 支付确认与幂等
 
-- PRE 检查只针对本会话、状态为 `PENDING_CONFIRMATION` 的草稿；其他情况（已执行、已取消、他人草稿）直接交给 `PaymentService.confirm`，保持 Phase 1 的错误码（`replayed=true`、`DRAFT_CANCELLED` 等）。
+- PRE 检查只针对本会话、状态为 `PENDING_CONFIRMATION` 的草稿；其他情况（已执行、已取消、他人草稿）直接交给 `PaymentService.confirm`，保持原有的错误码（`replayed=true`、`DRAFT_CANCELLED` 等）。
 - 已执行的草稿再次确认时不再评估，返回 `replayed=true`，不重复扣款（在线 C-F 恢复步骤已验证）。
 - 写操作从不自动重试：STEER、DENY 或不可用时只返回给用户，不由模型或代码再次调用。
 - 评估请求本身的重试（5xx/超时）没有业务副作用，不影响幂等。
@@ -123,7 +123,7 @@ flowchart LR
 |---|---|---|
 | 只有 OTel（`OBSERVABILITY_ENABLED=true`、`CONTROL_MODE=off`） | Trace、父子树、token 正常；**没有 control span，也没有 Controls 标签内容**；业务不受任何规则约束（如“向王五转账”照常生成草稿） | 在线 C-G，Trace `fca8fb8508e556bafecb16012f1178cd` |
 | 只有 Control API（`CONTROL_MODE=remote-api`、`OBSERVABILITY_ENABLED=false`） | 决策照常执行（拦截有效），UI 执行详情中可见；Console 中没有这次请求的 Trace，因此也没有 Controls 详情 | 离线测试覆盖该组合；在线：**未单独验证**（未做该组合的 Console 检查） |
-| Control API + OTLP control span（两个开关都开） | Controls 标签显示控件名、Triggered、Applies To、Evaluator、Trigger if、View control，与被检查的步骤关联 | 在线 C-B / C-D / C-E 截图（`PHASE2-VALIDATION.md` 第 5 节） |
+| Control API + OTLP control span（两个开关都开） | Controls 标签显示控件名、Triggered、Applies To、Evaluator、Trigger if、View control，与被检查的步骤关联 | 在线 C-B / C-D / C-E 截图（[`VALIDATION.md`](VALIDATION.md) 第 5 节） |
 | 自定义属性（如 `bank.control.pre.verdict`）不带 `galileo.span.kind=control` | 只出现在 Span metadata 中，**不会**出现在 Controls 标签 | 应用的 Tool/LLM span 同时带有这些属性，Console 中可对比 |
 
 ## 9. STEER 与 PII 脱敏的区别
@@ -138,25 +138,27 @@ flowchart LR
 |---|---|---|
 | `CONTROL_MODE` | `off` | `remote-api` 开启；与 `OBSERVABILITY_ENABLED` 相互独立 |
 | `AGENT_CONTROL_URL` | 按配置档推导 | o11y：`https://app.<realm>.observability.splunkcloud.com/ao/agent-control` |
-| `AGENT_CONTROL_EVALUATION_PATH` | `/api/v1/evaluation` | P0 实测 |
-| `AGENT_CONTROL_RUNTIME_AUTH_MODE` / `…_TOKEN_HEADER` | `jwt` / `X-Agent-Control-Runtime-Token` | P0 实测：评估接口必须带 Runtime Token |
+| `AGENT_CONTROL_EVALUATION_PATH` | `/api/v1/evaluation` | 协议验证实测 |
+| `AGENT_CONTROL_RUNTIME_AUTH_MODE` / `…_TOKEN_HEADER` | `jwt` / `X-Agent-Control-Runtime-Token` | 协议验证实测：评估接口必须带 Runtime Token |
 | `AGENT_CONTROL_AGENT_NAME` | `bank-agent-java` | 至少 10 个字符，`[a-z0-9:_-]` |
 | `CONTROL_READ_FAILURE_MODE` / `CONTROL_WRITE_FAILURE_MODE` | `fail-open` / `fail-closed` | 服务不可用时的处理 |
 | `MAX_CONTROL_STEER_RETRIES` | `2` | STEER 的最大改写次数 |
 
-开启 `remote-api` 但缺少地址、凭据或无法解析 Agent Stream 时，应用**启动失败**并给出原因，不会悄悄降级为 `off`。完整推导规则见 [`CONFIG-MAPPING.md`](CONFIG-MAPPING.md)。
+开启 `remote-api` 但缺少地址、凭据或无法解析 Agent Stream 时，应用**启动失败**并给出原因，不会悄悄降级为 `off`。完整推导规则见 [`../CONFIG-MAPPING.md`](../CONFIG-MAPPING.md)。
 
-## 11. 演示规则
+## 11. 规则的管理接口
 
-定义文件：[`agent-control/demo-controls.json`](agent-control/demo-controls.json)（与服务端实际保存的内容一致）。创建并绑定到 Agent Stream 的方式（Token 通过标准输入传给 curl，不出现在命令行参数中）：
+规则由服务端保存，Java 应用只读取和评估，不创建规则。管理接口（`X-SF-Token`）：
 
 ```text
-PUT  {AGENT_CONTROL_URL}/api/v1/controls                 {"name": "...", "data": {...}}   → {"control_id": N}
-PUT  {AGENT_CONTROL_URL}/api/v1/control-bindings/by-key  {"control_id": N, "target_type": "log_stream", "target_id": "<stream uuid>", ...}
-PUT  {AGENT_CONTROL_URL}/api/v1/controls/{N}/data        {"data": {...}}                  （修改条件，无需重启应用）
+PUT   {AGENT_CONTROL_URL}/api/v1/controls                 {"name": "...", "data": {...}}                       → {"control_id": N}
+PUT   {AGENT_CONTROL_URL}/api/v1/control-bindings/by-key  {"target_type": "log_stream", "target_id": "<stream uuid>",
+                                                           "control_id": N, "enabled": true}                    → 绑定到 Agent Stream
+PATCH {AGENT_CONTROL_URL}/api/v1/control-bindings/by-key  （同上，"enabled": false）                             → 停用绑定
+PUT   {AGENT_CONTROL_URL}/api/v1/controls/{N}/data        {"data": {...}}                                      → 修改条件，无需重启应用
 ```
 
-也可以在 Console：Project → Agent Stream → **Controls** → Add control 中创建同样的规则（Server execution）。各规则的用途和验证结果见 `PHASE2-VALIDATION.md` 第 4.2、4.3 节。
+Console 中 Agent Stream → **Controls** 列表的开关对应的是规则与该 Stream 的绑定：协议验证时通过上面的 PATCH 停用的规则 13–15，在该列表中显示为关闭。演示用的 6 条规则、它们的定义文件和创建步骤见 [`../demo/DEMO-GUIDE.md`](../demo/DEMO-GUIDE.md)。
 
 ## 12. 与官方 Python SDK 的差异
 

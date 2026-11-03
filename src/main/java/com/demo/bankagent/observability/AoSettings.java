@@ -91,7 +91,7 @@ public record AoSettings(
         problems = List.copyOf(problems);
     }
 
-    /** True when any Phase 2 feature that talks to the backend is switched on. */
+    /** True when any Galileo feature that talks to the backend is switched on. */
     public boolean active() {
         return observabilityEnabled || controlMode == ControlMode.REMOTE_API;
     }

@@ -45,7 +45,7 @@ import org.springframework.web.bind.annotation.RestController;
  * Explicit, user-triggered transfer decisions. These endpoints are called only by the UI buttons;
  * they are not reachable from the LLM tools.
  *
- * <p>Phase 2: a confirmation is its own trace ("payment.confirm", root span, same AO session via
+ * <p>Instrumentation: a confirmation is its own trace ("payment.confirm", root span, same AO session via
  * gen_ai.conversation.id, span LINK to the span that created the draft - not a fake child of the old chat turn).
  * Agent Control step "payment.confirm" (write, default fail-closed) is checked BEFORE PaymentService.confirm, so a
  * DENY, a STEER or an unavailable Control service can never cause a debit. The POST check is audit-only: a decision

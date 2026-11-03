@@ -43,7 +43,7 @@ import org.springframework.stereotype.Service;
  * Entry point for one chat turn: resolves or creates the conversation, serializes turns of the same
  * conversation, runs the Supervisor and returns the answer together with the real execution trace.
  *
- * <p>Phase 2: each turn is one OpenTelemetry trace whose root span is "invoke_agent BankingAssistant" (bound to the
+ * <p>Instrumentation: each turn is one OpenTelemetry trace whose root span is "invoke_agent BankingAssistant" (bound to the
  * conversation via gen_ai.conversation.id, so AO groups the turns of a conversation into one session). Agent
  * Control step "banking-assistant" checks the user's message before the Supervisor runs (PRE) and the final answer
  * before it is returned (POST). A blocked turn returns a clear, safe answer; protected content is never returned.

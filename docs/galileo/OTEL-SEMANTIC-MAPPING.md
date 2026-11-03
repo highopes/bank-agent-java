@@ -1,6 +1,6 @@
-# Phase 2 OTel 语义映射（Java Span → Splunk AO）
+# Galileo 插桩的 OTel 语义映射（Java Span → Splunk AO）
 
-属性名与官方 `splunk-ao-python` SDK（`f7a20ed`，`converter/attribute_mapping.py`）在 o11y 模式下发送的 OTLP 属性一致；“AO 中显示为”一列来自 Phase 2 实测回读的 AO 记录（`GET /ao/api/projects/{id}/traces/{uuid}`），不是推测。常量定义在 `observability/GenAiAttributes.java`。
+属性名与官方 `splunk-ao-python` SDK（`f7a20ed`，`converter/attribute_mapping.py`）在 o11y 模式下发送的 OTLP 属性一致；“AO 中显示为”一列来自在线验收时实测回读的 AO 记录（`GET /ao/api/projects/{id}/traces/{uuid}`），不是推测。常量定义在 `observability/GenAiAttributes.java`。
 
 ## 1. Resource 与路由
 
@@ -10,7 +10,7 @@
 | `service.version` | Maven 版本，如 `0.2.0-SNAPSHOT` | 标准 OTel |
 | `deployment.environment.name` | `local-demo` | 标准 OTel |
 | `splunk_ao.project.name` / `splunk_ao.logstream.name`（o11y）<br/>`galileo.project.name` / `galileo.logstream.name`（galileo） | `bank-agent-java` / `bank-java-demo` | 路由（与官方 SDK 相同）；galileo 配置档**未在线验证** |
-| 请求头 `project` / `logstream` | 同上 | 路由（P0 验证：必须用 `logstream`，`agentstream` 会进入 “Unassigned”） |
+| 请求头 `project` / `logstream` | 同上 | 路由（协议验证：必须用 `logstream`，`agentstream` 会进入 “Unassigned”） |
 | 请求头 `X-SF-Token`（o11y）/ `Galileo-API-Key`（galileo） | 凭据 | 认证 |
 
 ## 2. Span 类型
@@ -57,7 +57,7 @@ AO 根据 `gen_ai.operation.name`（control 还需要 `galileo.span.kind`）判�
 | `gen_ai.tool.call.arguments` | 默认 `{"captured":false,"argumentNames":[…]}`（只有参数名） | Input |
 | `gen_ai.tool.call.result` | 默认 `{"captured":false,"resultChars":N}`；被 Control 拦截时为 `{"error":"CONTROL_DENIED",…}` | Output |
 | `bank.tool.access` | `READ` / `WRITE` | metadata |
-| `bank.control.pre.verdict` / `.latency_ms` / `.control` / `.failure`，`bank.control.post.*` | Control 结果摘要 | metadata（**不会**出现在 Controls 标签，见 PHASE2-CONTROL-API 第 8 节） |
+| `bank.control.pre.verdict` / `.latency_ms` / `.control` / `.failure`，`bank.control.post.*` | Control 结果摘要 | metadata（**不会**出现在 Controls 标签，见 [`AGENT-CONTROL.md`](AGENT-CONTROL.md) 第 8 节） |
 | `bank.control.blocked` | `true` | metadata |
 
 ### 2.4 UI 确认 / 取消 —— `payment.confirm`、`payment.cancel`
@@ -82,7 +82,7 @@ HTTP 响应头 `X-Bank-Trace-Id` / `X-Bank-AO-Trace-Id`（成功和失败都有�
 | `galileo.span.kind` | `control` | `type=control`（盾牌图标） |
 | `gen_ai.operation.name` | `control` | — |
 | `agent_control.control_id` / `control_name` / `agent_name` | `18` / 规则名 / `bank-agent-java` | Controls 标签：控件名、View control 链接 |
-| `agent_control.check_stage` | `pre` / `post` | 阶段 |
+| `agent_control.check_stage` | `pre` / `post` | 检查时机（Stage） |
 | `agent_control.applies_to` | `tool_call` / `llm_call` | Applies To |
 | `agent_control.evaluator_name` / `selector_path` | `list` / `input.beneficiary` | Evaluators、Trigger if |
 | `agent_control.action` / `matched` / `confidence` | `deny` / `true` / `1.0` | Triggered（matched=true 时） |

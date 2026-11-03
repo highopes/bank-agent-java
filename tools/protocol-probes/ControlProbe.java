@@ -1,6 +1,6 @@
-// Phase 2 P0 probe (local use only): Java 21 HttpClient -> Splunk AO SaaS Agent Control REST API.
+// Protocol verification probe (local use only): Java 21 HttpClient -> Splunk AO SaaS Agent Control REST API.
 // Steps: health -> initAgent (idempotent overwrite) -> runtime-token-exchange -> evaluation PRE/POST.
-// Run with tools/p0/run-probe.sh ControlProbe. Credentials come from environment variables only and are
+// Run with tools/protocol-probes/run-probe.sh ControlProbe. Credentials come from environment variables only and are
 // never printed (the runtime token is reported by length only).
 //
 // Protocol source: agent-control-sdk 8.11.0 (client.py, agents.py, evaluation.py) + Splunk AO docs
@@ -39,7 +39,7 @@ public class ControlProbe {
 
         ObjectNode init = JSON.createObjectNode();
         init.putObject("agent").put("agent_name", agent)
-                .put("agent_description", "Bank Agent Java demo (Java P0 probe)").put("agent_version", "0.2.0-p0");
+                .put("agent_description", "Bank Agent Java demo (Java protocol probe)").put("agent_version", "0.2.0-probe");
         ArrayNode steps = init.putArray("steps");
         for (String llm : List.of("banking-assistant", "supervisor-router", "account-agent", "transactions-agent",
                 "payments-agent")) {

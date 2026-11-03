@@ -1,4 +1,4 @@
-# Phase 2 Java 插桩教程（写给不熟悉 Java 的读者）
+# Galileo Java 插桩教程（写给不熟悉 Java 的读者）
 
 目标：读完本文，你能看懂本项目是**在哪里、用什么方式**给 Java 代码加上 OpenTelemetry（OTel）观测和 Agent Control 门禁的，能自己运行一次并在 Splunk AO Console 中找到对应的 Trace。所有代码片段都摘自最终能编译、测试通过的源码。
 
@@ -15,7 +15,7 @@
 | `try-with-resources` | `try (X x = ...) { }` 结束时**一定**会自动调用 `x.close()`，即使中途出错 | `try (Scope ignored = span.makeCurrent()) { ... }` 保证“当前 Span”一定被恢复 |
 | 异常（exception） | 出错时抛出、由上层 `catch` 处理的对象 | `ControlDeniedException`：Control 拒绝时抛出 |
 | `finally` | 无论成功或失败都会执行的代码块 | `span.end()` 放在 `finally` 里，Span 一定会结束 |
-| ThreadLocal | 每个线程各自一份的变量 | Phase 1 的 `ExecutionTrace`（右侧“执行详情”面板的数据）存在 ThreadLocal 中 |
+| ThreadLocal | 每个线程各自一份的变量 | 应用原有的 `ExecutionTrace`（右侧“执行详情”面板的数据）存在 ThreadLocal 中 |
 | OTel Context | OTel 用来记住“当前是哪个 Span”的上下文，也绑定在当前线程上，但可以显式传递 | `span.makeCurrent()` 把 Span 设为当前；之后创建的 Span 自动以它为父 |
 
 ThreadLocal 与 OTel Context 的区别：前者是本项目自己的业务记录，只服务于 UI；后者是 OTel 的标准机制，决定 Span 的父子关系并随 Trace 发往 AO。两者并存，互不替代。
@@ -99,7 +99,7 @@ SdkTracerProvider provider = SdkTracerProvider.builder()
         .build();
 ```
 
-`OBSERVABILITY_ENABLED=false` 时不创建 SDK，`BankTelemetry.noop()` 返回一个什么也不做的 Tracer：所有插桩代码照常运行，但不产生任何 Span、不发任何网络请求，行为与 Phase 1 完全一致（`ControlDisabledRegressionIT` 验证）。
+`OBSERVABILITY_ENABLED=false` 时不创建 SDK，`BankTelemetry.noop()` 返回一个什么也不做的 Tracer：所有插桩代码照常运行，但不产生任何 Span、不发任何网络请求，行为与没有插桩时完全一致（`ControlDisabledRegressionIT` 验证）。
 
 ## 4. 插桩的通用写法
 
@@ -125,7 +125,7 @@ try (Scope ignored = span.makeCurrent()) {                                   // 
 
 ### 5.1 `conversation/ChatService.java`：一轮聊天的根 Span
 
-修改前（Phase 1）：
+修改前（插桩前）：
 
 ```java
 ExecutionTrace trace = ExecutionTrace.begin(conversation.getId());
@@ -142,7 +142,7 @@ try {
 }
 ```
 
-修改后（Phase 2）：
+修改后（插桩后）：
 
 ```java
 ExecutionTrace trace = ExecutionTrace.begin(conversation.getId());
@@ -205,7 +205,7 @@ try (Scope ignored = span.makeCurrent()) {
 
 ### 5.3 LLM 调用：为什么不用 `TraceChatModelListener`
 
-Phase 1 的 `llm/TraceChatModelListener.java`（**未修改**）实现了 LangChain4j 的 `ChatModelListener`，它的 `onResponse` 在模型**返回之后**才被调用。它适合给 UI 记录 token 和耗时，但不适合做 Span：
+应用原有的 `llm/TraceChatModelListener.java`（只改了类注释）实现了 LangChain4j 的 `ChatModelListener`，它的 `onResponse` 在模型**返回之后**才被调用。它适合给 UI 记录 token 和耗时，但不适合做 Span：
 
 - Span 需要在调用**开始前**创建并设为当前，才能拥有正确的开始时间和父子关系；
 - PRE Control 必须在请求发给 OpenAI **之前**执行，监听器做不到“阻止调用”。
@@ -262,7 +262,7 @@ try (Scope ignored = span.makeCurrent()) {
 }
 ```
 
-为什么不能用 Phase 1 已有的 `afterToolExecution` 回调做 Control：它在 Tool **执行完成之后**才被调用，此时转账草稿已经写入数据库，无法实现 PRE 阻止。`afterToolExecution` 继续用于 UI 的执行详情记录。
+为什么不能用应用原有的 `afterToolExecution` 回调做 Control：它在 Tool **执行完成之后**才被调用，此时转账草稿已经写入数据库，无法实现 PRE 阻止。`afterToolExecution` 继续用于 UI 的执行详情记录。
 
 ### 5.5 写 Tool：`tool/PaymentTools.createTransferDraft`
 
@@ -317,7 +317,7 @@ public ConfirmationResult confirm(@PathVariable String draftId, @Valid @RequestB
 }
 ```
 
-`payment.confirm` 是一个**新的根 Span**（`setNoParent()`），因为用户点击按钮是一次独立的请求，不应伪装成之前聊天回合的子步骤。它通过 Span **link** 指向创建草稿的那个 Tool Span，并带有相同的 `gen_ai.conversation.id`，因此在 AO 中与聊天位于同一个 Session（`PHASE2-VALIDATION.md` 截图 3）。
+`payment.confirm` 是一个**新的根 Span**（`setNoParent()`），因为用户点击按钮是一次独立的请求，不应伪装成之前聊天回合的子步骤。它通过 Span **link** 指向创建草稿的那个 Tool Span，并带有相同的 `gen_ai.conversation.id`，因此在 AO 中与聊天位于同一个 Session（[`VALIDATION.md`](VALIDATION.md) 截图 3）。
 
 ## 6. 本地验证 Span 结构（不联网）
 
@@ -344,24 +344,26 @@ assertThat(all).allSatisfy(s -> assertThat(s.getTraceId()).isEqualTo(root.getTra
 ## 7. 在真实 AO 中查看
 
 ```bash
-export BANK_AGENT_DATA_DIR=~/.local/share/bank-agent-java-phase2-validation   # 可选：不动日常演示数据
 scripts/run.sh --background --observe            # 只开 Observe
-scripts/phase2-smoke.sh --yes                    # 问 3 个只读问题，约 1 分钟后回读 Span 树
+scripts/galileo-smoke.sh --yes                   # 问 3 个只读问题，约 1 分钟后在终端回读 Span 树（真实 OpenAI，少量费用）
+scripts/galileo-smoke.sh --trace <traceId>       # 只读：回读任意一条已有 Trace，并打印它所属的 AO Session
 ```
 
 `/api/chat` 的响应和 UI 右侧“执行详情”都会显示 `traceId`（OTel）与 `aoTraceId`（AO UUID）。在 Console 中：
 
 1. 打开 Project `bank-agent-java` → Agent Stream `bank-java-demo` → **Tracing**（`/api/status` 中的 `consoleStreamUrl` 可直接打开）；
-2. 用搜索框按 External Id（即 `traceId`）查找，或在 Sessions 中按会话查找；
+2. 在 **Sessions** 视图中，最新的会话就是刚才的对话；**Traces** 视图按时间列出 Trace，External Id 列就是 UI 显示的 `traceId`；
 3. 进入 Trace 后的 **Messages** 视图显示父子树：根 `invoke_agent BankingAssistant` → `invoke_agent SupervisorAgent` → `chat gpt-5-nano`（路由）→ `invoke_agent AccountAgent` → `chat` / `execute_tool …` → 盾牌图标的 control span；
 4. 选中 LLM span，右侧 **System Metrics** 显示 Num Input/Output Tokens、Latency、Cost；
-5. 失败步骤的 span metadata 中有 `error.type` 与 `otel.status_code: ERROR`（AO 目前不把它映射为记录的状态码，见 `PHASE2-VALIDATION.md` K2）。
+5. 失败步骤的 span metadata 中有 `error.type` 与 `otel.status_code: ERROR`（AO 目前不把它映射为记录的状态码，见 [`VALIDATION.md`](VALIDATION.md) K2）。
+
+演示时如何快速定位某一条 Trace（包括直接打开 Trace 的链接格式），见 [`../demo/DEMO-GUIDE.md`](../demo/DEMO-GUIDE.md)。
 
 ## 8. 出站请求与安全
 
 | 出站目标 | 何时 | 内容 |
 |---|---|---|
-| `api.openai.com` | 每次 LLM 调用（Phase 1 已有） | 提示词、虚构的银行数据 |
+| `api.openai.com` | 每次 LLM 调用（应用本身就有） | 提示词、虚构的银行数据 |
 | `ingest.<realm>.observability.splunkcloud.com`（OTLP） | `OBSERVABILITY_ENABLED=true` | Span 结构、耗时、token、模型名、步骤名；**默认不含正文**（`[omitted: DEMO_TRACE_CONTENT=false]`），工具参数只导出参数名、结果只导出长度 |
 | `app.<realm>.observability.splunkcloud.com/ao/api` | Observe 或 Control 开启时启动一次 | 按名称查找/创建 Project 与 Agent Stream |
 | `app.<realm>.observability.splunkcloud.com/ao/agent-control` | `CONTROL_MODE=remote-api` | 受控步骤的输入/输出（评估必需，Control 不能在没有内容的情况下判断）；会话 ID |

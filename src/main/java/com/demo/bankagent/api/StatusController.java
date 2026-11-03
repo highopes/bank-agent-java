@@ -41,7 +41,7 @@ public class StatusController {
     public Map<String, Object> status() {
         Map<String, Object> status = new LinkedHashMap<>();
         status.put("application", "bank-agent-java");
-        status.put("phase", "Phase 2 - OpenTelemetry Observe + Agent Control (each switchable)");
+        status.put("features", "OpenTelemetry Observe + Agent Control (each switchable)");
         status.put("llmProvider", "OpenAI");
         status.put("llmConfigured", properties.openai().isConfigured());
         status.put("model", properties.openai().model());

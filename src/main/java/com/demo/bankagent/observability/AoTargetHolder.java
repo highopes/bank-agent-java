@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>Failure semantics (task book 0.4.4): with CONTROL_MODE=remote-api a failure stops the application (the
  * Agent Control target ID is mandatory). With Observe only, the application starts, logs a clear warning and
- * keeps exporting spans routed by project/stream NAME (P0 showed the o11y ingest routes by name).
+ * keeps exporting spans routed by project/stream NAME (protocol verification showed the o11y ingest routes by name).
  */
 @Component
 public class AoTargetHolder {

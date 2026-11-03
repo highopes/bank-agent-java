@@ -40,7 +40,7 @@ public class ControlConfiguration {
             throw new AoConfigurationException("CONTROL_MODE=remote-api, but Agent Control at "
                     + AoSettings.host(settings.agentControlUrl().value()) + " is not usable (" + e.code() + "): "
                     + e.getMessage() + ". Check AGENT_CONTROL_URL / credentials, or set CONTROL_MODE=off. "
-                    + "See docs/PHASE2-CONTROL-API.md.");
+                    + "See docs/galileo/AGENT-CONTROL.md.");
         }
         if (!settings.observabilityEnabled()) {
             log.warn("Agent Control is on but OBSERVABILITY_ENABLED=false: decisions are enforced, but no control "

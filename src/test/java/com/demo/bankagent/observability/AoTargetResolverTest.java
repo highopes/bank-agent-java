@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * "Find by name, create when missing" for both profiles against a loopback mock (no network). Response shapes are
- * the ones recorded from the real au0 SaaS in P0 (o11y) and the public Galileo OpenAPI (galileo).
+ * the ones recorded from the real au0 SaaS during protocol verification (o11y) and the public Galileo OpenAPI (galileo).
  */
 class AoTargetResolverTest {
 

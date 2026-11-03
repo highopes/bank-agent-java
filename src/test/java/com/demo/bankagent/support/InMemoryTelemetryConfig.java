@@ -9,7 +9,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 
-/** Records spans in memory instead of exporting them (no network); used by the Phase 2 integration tests. */
+/** Records spans in memory instead of exporting them (no network); used by the instrumentation integration tests. */
 @TestConfiguration(proxyBeanMethods = false)
 public class InMemoryTelemetryConfig {
 

@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 /**
  * Dispatches to the LangChain4j AI services. Each agent has its own per-conversation memory.
  *
- * <p>Phase 2: every delegation runs inside an "invoke_agent &lt;Name&gt;Agent" span that is started before the AI
+ * <p>Instrumentation: every delegation runs inside an "invoke_agent &lt;Name&gt;Agent" span that is started before the AI
  * service is called, so its LLM and tool spans become children of the right agent.
  */
 @Component

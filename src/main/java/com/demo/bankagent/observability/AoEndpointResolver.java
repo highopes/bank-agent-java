@@ -24,7 +24,7 @@ import java.util.regex.Pattern;
  *   <li>galileo: galileo-core 4.5.0 base_config.set_api_url (app.galileo.ai -&gt; api.galileo.ai, otherwise
  *       "console" -&gt; "api"), galileo 2.6.0 otel.py (api_url + "otel/traces", Galileo-API-Key), golden demo
  *       setup_env.py (console root + "/api/agent-control").</li>
- *   <li>Agent Control evaluation route: verified in Phase 2 P0 (docs/PHASE2-PROTOCOL-VERIFICATION.md).</li>
+ *   <li>Agent Control evaluation route: verified against the SaaS (docs/galileo/PROTOCOL-VERIFICATION.md).</li>
  * </ul>
  */
 public final class AoEndpointResolver {
@@ -34,7 +34,7 @@ public final class AoEndpointResolver {
     public static final String DEFAULT_SERVICE_NAME = "bank-agent-java";
     public static final String DEFAULT_AGENT_NAME = "bank-agent-java";
     public static final String DEFAULT_TARGET_TYPE = "log_stream";
-    /** Verified in P0 against the au0 SaaS (agent-control 8.15.0) and identical to agent-control-sdk 8.11. */
+    /** Verified against the au0 SaaS (agent-control 8.15.0) and identical to agent-control-sdk 8.11. */
     public static final String DEFAULT_EVALUATION_PATH = "/api/v1/evaluation";
     public static final String DEFAULT_RUNTIME_AUTH_MODE = "jwt";
     public static final String DEFAULT_RUNTIME_TOKEN_HEADER = "X-Agent-Control-Runtime-Token";

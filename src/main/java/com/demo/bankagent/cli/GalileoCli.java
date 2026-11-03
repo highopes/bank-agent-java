@@ -30,7 +30,7 @@ import java.util.Optional;
 import java.util.Properties;
 
 /**
- * Command-line helper used by scripts/preflight.sh and scripts/phase2-smoke.sh (plain main, no Spring context).
+ * Command-line helper used by scripts/preflight.sh and scripts/galileo-smoke.sh (plain main, no Spring context).
  * It reuses {@link AoEndpointResolver}, so the scripts show exactly the values the application would use.
  * It never prints credentials and never creates anything in the backend.
  *
@@ -40,7 +40,7 @@ import java.util.Properties;
  *   trace &lt;otel-trace-id|ao-uuid&gt;...  read-only AO span tree of traces
  * </pre>
  */
-public final class Phase2Cli {
+public final class GalileoCli {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final List<String> KEYS = List.of("OBSERVABILITY_ENABLED", "CONTROL_MODE", "DEMO_TRACE_CONTENT",
@@ -51,7 +51,7 @@ public final class Phase2Cli {
             "AGENT_CONTROL_RUNTIME_AUTH_MODE", "AGENT_CONTROL_RUNTIME_TOKEN_HEADER", "CONTROL_READ_FAILURE_MODE",
             "CONTROL_WRITE_FAILURE_MODE", "MAX_CONTROL_STEER_RETRIES");
 
-    private Phase2Cli() {
+    private GalileoCli() {
     }
 
     public static void main(String[] args) throws Exception {
@@ -61,7 +61,7 @@ public final class Phase2Cli {
             case "smoke" -> smoke();
             case "trace" -> trace(List.of(args).subList(1, args.length));
             default -> {
-                System.err.println("Usage: Phase2Cli preflight | smoke | trace <trace-id>...");
+                System.err.println("Usage: GalileoCli preflight | smoke | trace <trace-id>...");
                 yield 2;
             }
         };
@@ -108,7 +108,7 @@ public final class Phase2Cli {
 
     static int preflight() throws IOException {
         Path file = galileoFile();
-        System.out.println("Phase 2 settings file: " + file + (Files.exists(file) ? "" : " (not found)"));
+        System.out.println("Galileo settings file: " + file + (Files.exists(file) ? "" : " (not found)"));
         AoSettings s;
         try {
             s = settings();

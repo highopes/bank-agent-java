@@ -30,7 +30,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Pure Java 21 client of the Agent Control server API of Splunk AO SaaS (no Python/TypeScript sidecar). Every
- * route below was verified against the real au0 SaaS in P0 (docs/PHASE2-PROTOCOL-VERIFICATION.md); request and
+ * route below was verified against the real au0 SaaS during protocol verification (docs/galileo/PROTOCOL-VERIFICATION.md); request and
  * response shapes follow agent-control-sdk 8.11 / agent-control-models:
  * <ul>
  *   <li>GET  {AGENT_CONTROL_URL}/health</li>

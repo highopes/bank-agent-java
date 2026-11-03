@@ -23,8 +23,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * OBSERVABILITY_ENABLED=false and CONTROL_MODE=off (the defaults): the application must behave exactly like
- * Phase 1 - no backend lookup, no spans, no Control requests (task book 9.1 ControlDisabledRegressionIT). The
- * Phase 1 test classes themselves run unchanged in this mode as well.
+ * the uninstrumented application - no backend lookup, no spans, no Control requests. The application's original
+ * test classes (written before the instrumentation) run unchanged in this mode as well.
  */
 class ControlDisabledRegressionIT extends IntegrationTestBase {
 
@@ -74,7 +74,7 @@ class ControlDisabledRegressionIT extends IntegrationTestBase {
     }
 
     @Test
-    void confirmBehavesLikePhase1WithoutTraceHeaders() throws Exception {
+    void confirmIsUnchangedAndHasNoTraceHeaders() throws Exception {
         model.routeTo("PAYMENTS", "向张三转账500元")
                 .toolCall("createTransferDraft", "{\"beneficiary\":\"张三\",\"amount\":\"500\"}")
                 .answer("已创建草稿。");

@@ -16,7 +16,7 @@ import org.slf4j.LoggerFactory;
  *
  * <ul>
  *   <li>o11y (base .../ao/api, X-SF-Token): GET projects?project_name=&amp;type=gen_ai, POST projects,
- *       GET/POST projects/{id}/log_streams. Verified in P0: create 200, duplicate project 422, duplicate stream 400.</li>
+ *       GET/POST projects/{id}/log_streams. Verified against the SaaS: create 200, duplicate project 422, duplicate stream 400.</li>
  *   <li>galileo (base https://api..., Galileo-API-Key): public OpenAPI /v2/projects/paginated (POST query),
  *       POST /v2/projects, GET/POST /v2/projects/{id}/log_streams. Not verified online (no Galileo key).</li>
  * </ul>

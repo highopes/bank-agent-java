@@ -1,15 +1,17 @@
-# Phase 2 P0 协议验证（Protocol Verification）
+# Galileo 插桩的协议验证（Protocol Verification）
 
-> 执行日期：2026-11-02。后端：Splunk AO SaaS（Splunk Observability Cloud，realm `au0`），Agent Control 服务版本 8.15.0。所有请求都由本机的 Java 探针或 Java 应用发出（`tools/p0/`）；请求与响应示例均已脱敏，不含 Token。Galileo 两种后端（选项 B/C）**未做 P0**。
+在写 Java 插桩代码之前，先用最小的 Java 探针确认 Splunk AO 的 OTLP 导入、Project/Agent Stream 接口和 Agent Control 接口在真实 SaaS 上怎样工作，避免按猜测实现。本文记录这些验证的方法和结论。
 
-## 1. 结论（Evidence Matrix）
+> 执行日期：2026-11-02。后端：Splunk AO SaaS（Splunk Observability Cloud，realm `au0`），Agent Control 服务版本 8.15.0。所有请求都由本机的 Java 探针或 Java 应用发出（`tools/protocol-probes/`）；请求与响应示例均已脱敏，不含 Token。Galileo 两种后端（选项 B/C）**未做协议验证**。
 
-| Gate | 验证内容 | 方法 | 结果 |
+## 1. 结论（检查项）
+
+| 检查项 | 验证内容 | 方法 | 结果 |
 |---|---|---|---|
-| **O1** OTLP 路由与解析 | Java OTel SDK 发出的 OTLP/HTTP Span 能进入指定的 Project / Agent Stream，并被解析为 agent / llm / tool / control 类型 | `tools/p0/OtlpProbe.java` 发送合成 Trace，再用 AO REST API 与 Console 回读 | **PASS** |
-| **C1** Control API 可用 | 健康检查、Agent 注册（步骤目录 + 目标 Agent Stream）、Runtime Token 交换、评估接口、绑定规则查询 | `tools/p0/ControlProbe.java`，真实规则 13/14/15 | **PASS** |
-| **C2** Java 端执行门禁 | 服务端只返回决策，PRE 阶段的阻止必须由 Java 实现 | Java Adapter + 离线测试 + 在线 C-B/C-E | **PASS**（服务端不会替 Java 抛异常，见 `PHASE2-CONTROL-API.md`） |
-| **C3** Console Controls 标签 | Java 发出的 control span 在 Console 中显示官方 Control 详情，并与同一 Trace 的被检查步骤关联 | OtlpProbe 发送带 `galileo.span.kind=control` 的 Span，在 Console 中查看 | **PASS**（之后用真实应用 Trace 再次验证，见 `PHASE2-VALIDATION.md` 第 5 节） |
+| **O1** OTLP 路由与解析 | Java OTel SDK 发出的 OTLP/HTTP Span 能进入指定的 Project / Agent Stream，并被解析为 agent / llm / tool / control 类型 | `tools/protocol-probes/OtlpProbe.java` 发送合成 Trace，再用 AO REST API 与 Console 回读 | **PASS** |
+| **C1** Control API 可用 | 健康检查、Agent 注册（步骤目录 + 目标 Agent Stream）、Runtime Token 交换、评估接口、绑定规则查询 | `tools/protocol-probes/ControlProbe.java`，真实规则 13/14/15 | **PASS** |
+| **C2** Java 端执行门禁 | 服务端只返回决策，PRE 检查时的阻止必须由 Java 实现 | Java Adapter + 离线测试 + 在线 C-B/C-E | **PASS**（服务端不会替 Java 抛异常，见 [`AGENT-CONTROL.md`](AGENT-CONTROL.md)） |
+| **C3** Console Controls 标签 | Java 发出的 control span 在 Console 中显示官方 Control 详情，并与同一 Trace 的被检查步骤关联 | OtlpProbe 发送带 `galileo.span.kind=control` 的 Span，在 Console 中查看 | **PASS**（之后用真实应用 Trace 再次验证，见 [`VALIDATION.md`](VALIDATION.md) 第 5 节） |
 
 关键发现：官方 `splunk-ao-python` SDK（`f7a20ed`，`converter/attribute_mapping.py`、`converter/span_converter.py`）在 o11y 模式下把所有 AO Span 类型（包括 control）**转换为普通 OTLP Span** 发送，`handlers/agent_control/bridge.py` 把 Agent Control 的评估结果转成 control span。因此 Java 只要发出相同的 OTLP 属性，就能走官方 Controls 标签的数据通道，不需要 Python sidecar，也不需要调用非公开接口。
 
@@ -40,7 +42,7 @@
 | 入库延迟 | 30–90 秒后才能通过 API 读到 |
 | Java SDK | OpenTelemetry Java 1.49.0，JDK HttpClient sender；公司 TLS 检查环境使用项目专用 truststore（与 OpenAI 调用相同） |
 
-AO 记录中 control span 的字段（P0 Trace `b8e9945f…`）：`type=control`、`control_id`、`agent_name`、`check_stage`、`applies_to`、`evaluator_name`、`selector_path`、`output={"action","matched","confidence"}`、`external_id=<OTel span id>`；**`input` 为空**（AO 不映射 control span 的 `gen_ai.input.messages`）。
+AO 记录中 control span 的字段（探针 Trace `b8e9945f…`）：`type=control`、`control_id`、`agent_name`、`check_stage`、`applies_to`、`evaluator_name`、`selector_path`、`output={"action","matched","confidence"}`、`external_id=<OTel span id>`；**`input` 为空**（AO 不映射 control span 的 `gen_ai.input.messages`）。
 
 ## 4. Agent Control REST API（Gate C1）
 
@@ -58,7 +60,7 @@ AO 记录中 control span 的字段（P0 Trace `b8e9945f…`）：`type=control`
 | `GET /api/v1/agents/bank-agent-java/controls?target_type=log_stream&target_id=…` | 200 `{"controls":[{"id","name","control":{…}}]}` |
 | `PUT /api/v1/controls` `{"name","data":{…}}` | 200 `{"control_id":13}` |
 | `PUT /api/v1/control-bindings/by-key` | 200 `{"binding_id":…,"created":true,"enabled":true}` |
-| `PUT /api/v1/controls/{id}/data` `{"data":{…}}` | 200 `{"success":true}`（Phase 2 在线验收中用于“不重启修改规则”） |
+| `PUT /api/v1/controls/{id}/data` `{"data":{…}}` | 200 `{"success":true}`（在线验收中用于“不重启修改规则”） |
 
 initAgent 请求（脱敏）：
 
@@ -93,7 +95,7 @@ initAgent 请求（脱敏）：
 
 请求头：`X-SF-Token`、`X-Agent-Control-Runtime-Token`、`X-Agent-Control-SDK: bank-agent-java`、`X-Trace-Id` / `X-Span-Id`（当前 OTel 上下文，与官方 SDK 相同）。
 
-DENY 响应（P0 规则 14，原样，来自 `src/test/resources/agent-control/evaluation-deny.json`）：
+DENY 响应（探针规则 14，原样，来自 `src/test/resources/agent-control/evaluation-deny.json`）：
 
 ```json
 {"is_safe":false,"confidence":1.0,"reason":null,
@@ -108,7 +110,7 @@ STEER 响应的区别：`"action":"steer"`，`"steering_context":{"message":"Ans
 
 ## 5. Console Controls 标签（Gate C3）
 
-P0 Trace `b8e9945f6b751f313e8d6a84fe3a2b1d`：Messages 视图中 control span 显示盾牌图标；选中后右侧 **Controls 1** 标签显示控件名、Triggered、Applies To `tool_call`、Trigger if `input`、View control（链接到 `#/agent-obs/controls/13/edit`）。P0 截图包含 Console 页头中的用户名/组织名，没有放入仓库；仓库中的截图来自之后真实应用产生的 Trace（`PHASE2-VALIDATION.md` 第 5 节）。
+探针 Trace `b8e9945f6b751f313e8d6a84fe3a2b1d`：Messages 视图中 control span 显示盾牌图标；选中后右侧 **Controls 1** 标签显示控件名、Triggered、Applies To `tool_call`、Trigger if `input`、View control（链接到 `#/agent-obs/controls/13/edit`）。探针运行时的截图包含 Console 页头中的用户名/组织名，没有放入仓库；仓库中的截图来自之后真实应用产生的 Trace（[`VALIDATION.md`](VALIDATION.md) 第 5 节）。
 
 control span 的 OTLP 属性（与官方 SDK `set_control_attributes` 相同）：
 
@@ -125,12 +127,12 @@ control span 的 OTLP 属性（与官方 SDK `set_control_attributes` 相同）�
 | `agent_control.control_execution_id` | 评估响应中的 ID |
 | `gen_ai.output.messages` | `{"action","matched","confidence"}`（Console 中的 Output） |
 
-## 6. Phase 2 实施后补充的观察
+## 6. 插桩实现后补充的观察
 
 | 观察 | 证据 | 状态 |
 |---|---|---|
 | OTel `ERROR` 状态、`error.type`、`splunk_ao.status_code`（官方 SDK 设置的属性）都只出现在 span metadata 中，记录的 `status_code` 保持 0 | `ErrorSpanProbe` 7 种变体；应用 Trace `d3fa7b23…`（metadata `splunk_ao.status_code: "403"`） | 已记录（K2） |
-| Java 发出的部分 Trace 在 AO 中不显示输入/输出内容，同一格式的其他 Trace 显示完整 | 抓包重放、拆分请求、改 conversation ID、官方 SDK 对照（`PHASE2-VALIDATION.md` 第 8 节） | 根因未确定（K1） |
+| Java 发出的部分 Trace 在 AO 中不显示输入/输出内容，同一格式的其他 Trace 显示完整 | 抓包重放、拆分请求、改 conversation ID、官方 SDK 对照（[`VALIDATION.md`](VALIDATION.md) 第 8 节） | 根因未确定（K1） |
 | 评估接口同时有 `X-Trace-Id`/`X-Span-Id` 时，对 Trace 内容显示没有可见影响 | 带头评估后用相同 trace ID 重放 | 不是 K1 的原因 |
 
 ## 7. 向 Galileo / Splunk AO 团队提出的技术问题
@@ -145,9 +147,9 @@ control span 的 OTLP 属性（与官方 SDK `set_control_attributes` 相同）�
 ## 8. 探针与复现
 
 ```bash
-tools/p0/run-probe.sh OtlpProbe       # 合成 agent/llm/tool/control Trace；打印 trace ID
-tools/p0/run-probe.sh ControlProbe    # health / initAgent / runtime token / 评估；打印状态码和耗时
-tools/p0/run-probe.sh ErrorSpanProbe  # 各种错误表示与 control span 变体（K2 / K1 排查）
+tools/protocol-probes/run-probe.sh OtlpProbe       # 合成 agent/llm/tool/control Trace；打印 trace ID
+tools/protocol-probes/run-probe.sh ControlProbe    # health / initAgent / runtime token / 评估；打印状态码和耗时
+tools/protocol-probes/run-probe.sh ErrorSpanProbe  # 各种错误表示与 control span 变体（K2 / K1 排查）
 ```
 
 脚本只在自身进程中从私有文件读取 `AO_REALM` / `AO_O11Y_TOKEN`，从不打印。探针发送的都是合成的、不含敏感信息的数据。

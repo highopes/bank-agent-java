@@ -277,7 +277,7 @@ public class PaymentService {
     }
 
     /**
-     * Phase 2: a pending draft whose creation output was blocked by Agent Control (post deny / steer / fail-closed)
+     * Agent Control: a pending draft whose creation output was blocked by Agent Control (post deny / steer / fail-closed)
      * is withdrawn - cancelled with code CONTROL_WITHDRAWN and an audit record. Nothing is deleted; no money moves.
      */
     @Transactional(noRollbackFor = BankingException.class)
@@ -296,7 +296,7 @@ public class PaymentService {
         return Optional.of(toView(draft));
     }
 
-    /** Phase 2: audits a confirmation that Agent Control blocked before {@link #confirm} ran (no debit happened). */
+    /** Agent Control: audits a confirmation that Agent Control blocked before {@link #confirm} ran (no debit happened). */
     @Transactional
     public void auditControlRejectedConfirmation(String draftId, String conversationId, String customerId, String code,
                                                  String detail) {

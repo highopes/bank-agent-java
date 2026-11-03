@@ -1,6 +1,6 @@
-# Phase 2 架构：Observe 与 Agent Control
+# Galileo 插桩架构：Observe 与 Agent Control
 
-Phase 2 在 Phase 1 的业务代码外加了两条**相互独立**的数据路径。两个开关可以任意组合，关闭时行为与 Phase 1 完全一致。
+Galileo 插桩在银行 AI 应用的业务代码之外加了两条**相互独立**的数据路径。两个开关可以任意组合；都关闭时，应用的行为与没有插桩时完全一致。
 
 | 路径 | 开关 | 方向 | 是否影响业务结果 |
 |---|---|---|---|
@@ -67,9 +67,9 @@ flowchart TD
 | | `StepCatalog`、`ControlStep`、`StepAccess`、`ControlExceptions` | 步骤目录、读/写属性、Java 异常 |
 | `governance` | `StepGovernance`、`GovernedChatModel`、`GovernedToolExecutor` | 包装模型与工具 |
 | `tool` | `TransferToolSideEffects` | 写 Tool 输出被拦截时撤回草稿 |
-| `cli` | `Phase2Cli` | `scripts/preflight.sh`、`scripts/phase2-smoke.sh` 使用的命令行工具（复用同一个推导器，不启动 Spring） |
+| `cli` | `GalileoCli` | `scripts/preflight.sh`、`scripts/galileo-smoke.sh` 使用的命令行工具（复用同一个推导器，不启动 Spring） |
 
-修改的 Phase 1 类：`ChatService`、`SupervisorAgent`、`LangChainDomainAgentGateway`、`LlmIntentRouter`、`AgentConfig`、`PaymentController`、`PaymentService`（只新增方法）、`StatusController`、`UiController`、`ExecutionTrace`、`ErrorCode`、`DemoResetService`，以及前端 `app.js` / `index.html` / `app.css`。
+为插桩而修改的原有类：`ChatService`、`SupervisorAgent`、`LangChainDomainAgentGateway`、`LlmIntentRouter`、`AgentConfig`、`PaymentController`、`PaymentService`（只新增方法）、`StatusController`、`UiController`、`ExecutionTrace`、`ErrorCode`、`DemoResetService`，以及前端 `app.js` / `index.html` / `app.css`。
 
 ## 3. 启动顺序
 
@@ -144,25 +144,26 @@ sequenceDiagram
 
 | `OBSERVABILITY_ENABLED` | `CONTROL_MODE` | 行为 | 验证 |
 |---|---|---|---|
-| `false` | `off` | 与 Phase 1 完全一致：不查找后端、不创建 Span、不发 Control 请求 | `ControlDisabledRegressionIT`、Phase 1 全部测试 |
+| `false` | `off` | 与没有插桩时完全一致：不查找后端、不创建 Span、不发 Control 请求 | `ControlDisabledRegressionIT`、应用原有的全部测试 |
 | `true` | `off` | 只有 Trace；没有 control span；规则不生效 | 在线 O-A/O-B/O-C、C-G |
 | `false` | `remote-api` | 规则生效；决策显示在 UI 执行详情中；Console 中没有 Trace | 离线测试；在线未单独验证 |
 | `true` | `remote-api` | Trace + 规则 + Controls 标签 | 在线 C-A…C-F、P1 回归 |
 
-`scripts/run.sh --observe` / `--control` / `--trace-content` / `--phase2-off` 只对本次启动的 JVM 设置环境变量，不修改私有配置文件。
+`scripts/run.sh --observe` / `--control` / `--trace-content` / `--galileo-off` 只对本次启动的 JVM 设置环境变量，不修改私有配置文件。
 
 ## 6. 线程、上下文与隔离
 
-- 一轮聊天在一个 HTTP 工作线程中同步执行（LangChain4j 的工具调用也在同一线程），因此 OTel Context 和 Phase 1 的 `ExecutionTrace`（ThreadLocal）都能沿调用链传递，无需手动跨线程传播。
+- 一轮聊天在一个 HTTP 工作线程中同步执行（LangChain4j 的工具调用也在同一线程），因此 OTel Context 和应用原有的 `ExecutionTrace`（ThreadLocal）都能沿调用链传递，无需手动跨线程传播。
 - Span 导出由 `BatchSpanProcessor` 在后台线程完成，不阻塞请求；队列上限 2048，超出时丢弃 Span 而不是阻塞业务。
 - Agent Control 评估在请求线程上同步执行（必须在步骤前得到结果）：典型延迟约 0.26 秒/次；对没有绑定规则的步骤不发请求（规则列表缓存，最多每 5 秒刷新）。
 - 应用不把 OTel SDK 注册为全局实例，也让 Spring Boot 自带的 OTel 自动配置退出，避免重复导出。
 
 ## 7. 相关文档
 
-- [`PHASE2-JAVA-INSTRUMENTATION.md`](PHASE2-JAVA-INSTRUMENTATION.md)：插桩教程与修改前后代码
-- [`PHASE2-CONTROL-API.md`](PHASE2-CONTROL-API.md)：Control 契约、决策映射、各执行点处理
-- [`PHASE2-OTEL-SEMANTIC-MAPPING.md`](PHASE2-OTEL-SEMANTIC-MAPPING.md)：Span 属性与 AO 字段
-- [`PHASE2-PROTOCOL-VERIFICATION.md`](PHASE2-PROTOCOL-VERIFICATION.md)：P0 协议验证
-- [`PHASE2-VALIDATION.md`](PHASE2-VALIDATION.md)：验收结果与已知问题
-- [`CONFIG-MAPPING.md`](CONFIG-MAPPING.md)：配置键与推导规则
+- [`JAVA-INSTRUMENTATION.md`](JAVA-INSTRUMENTATION.md)：插桩教程与修改前后代码
+- [`AGENT-CONTROL.md`](AGENT-CONTROL.md)：Control 契约、决策映射、各执行点处理
+- [`OTEL-SEMANTIC-MAPPING.md`](OTEL-SEMANTIC-MAPPING.md)：Span 属性与 AO 字段
+- [`PROTOCOL-VERIFICATION.md`](PROTOCOL-VERIFICATION.md)：协议验证
+- [`VALIDATION.md`](VALIDATION.md)：验收结果与已知问题
+- [`../CONFIG-MAPPING.md`](../CONFIG-MAPPING.md)：配置键与推导规则
+- [`../demo/DEMO-GUIDE.md`](../demo/DEMO-GUIDE.md)：演示故事线与操作步骤

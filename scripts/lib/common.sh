@@ -6,7 +6,7 @@
 BANK_AGENT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BANK_AGENT_DATA_DIR="${BANK_AGENT_DATA_DIR:-$HOME/.local/share/bank-agent-java}"
 BANK_AGENT_SECRETS_FILE="${BANK_AGENT_SECRETS_FILE:-$HOME/.config/bank-agent-java/application-secrets.properties}"
-# Phase 2: Splunk AO / Galileo backend + Agent Control settings (private file, 0600, outside the repository).
+# Galileo instrumentation: Splunk AO / Galileo backend + Agent Control settings (private file, 0600, outside the repository).
 BANK_AGENT_GALILEO_FILE="${BANK_AGENT_GALILEO_FILE:-$HOME/.config/bank-agent-java/galileo.properties}"
 BANK_AGENT_HOST="${BANK_AGENT_HOST:-127.0.0.1}"
 BANK_AGENT_PORT="${BANK_AGENT_PORT:-8080}"
@@ -108,9 +108,9 @@ secrets_value() {
   awk -F'=' -v key="$1" '$1 ~ "^[[:space:]]*"key"[[:space:]]*$" {sub(/^[^=]*=[[:space:]]*/, ""); print; exit}' "$BANK_AGENT_SECRETS_FILE"
 }
 
-# Phase 2: effective value of a NON-secret switch (environment variable first, then galileo.properties).
+# Galileo instrumentation: effective value of a NON-secret switch (environment variable first, then galileo.properties).
 # Never use it for credentials.
-phase2_switch() {
+galileo_switch() {
   local key="$1" default="$2" value=""
   value="$(printenv "$key" 2>/dev/null || true)"
   if [ -z "$value" ] && [ -r "$BANK_AGENT_GALILEO_FILE" ]; then
@@ -128,12 +128,12 @@ tls_jvm_opts() {
   fi
 }
 
-# Runs the Phase 2 CLI (com.demo.bankagent.cli.Phase2Cli) from the application jar. It uses the same derivation
+# Runs the Galileo CLI (com.demo.bankagent.cli.GalileoCli) from the application jar. It uses the same derivation
 # code as the application and never prints credentials. Requires require_java21, ensure_jar, prepare_truststore.
-run_phase2_cli() {
+run_galileo_cli() {
   tls_jvm_opts
   "$JAVA_HOME/bin/java" -Dfile.encoding=UTF-8 ${TLS_JVM_OPTS[@]+"${TLS_JVM_OPTS[@]}"} \
-    -Dloader.main=com.demo.bankagent.cli.Phase2Cli -cp "$BANK_AGENT_JAR" \
+    -Dloader.main=com.demo.bankagent.cli.GalileoCli -cp "$BANK_AGENT_JAR" \
     org.springframework.boot.loader.launch.PropertiesLauncher "$@"
 }
 

@@ -21,7 +21,7 @@ import org.springframework.stereotype.Component;
 /**
  * Supervisor: asks the LLM router which agents are needed, delegates the self-contained tasks
  * sequentially and aggregates the answers. Clear boundaries (route / delegate / aggregate) make this
- * class the natural root for Phase 2 instrumentation: an "invoke_agent SupervisorAgent" span contains the router's
+ * class the natural root for the instrumentation: an "invoke_agent SupervisorAgent" span contains the router's
  * LLM span and one span per delegated domain agent.
  */
 @Component

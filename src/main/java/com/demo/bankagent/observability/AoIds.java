@@ -2,7 +2,7 @@ package com.demo.bankagent.observability;
 
 /**
  * Splunk AO stores an OpenTelemetry trace ID (32 hex) as a UUIDv4: the version nibble is forced to 4 and the
- * variant bits to RFC 4122 (observed in P0: OTel b8e9945f6b751f313e8d6a84fe3a2b1d -> AO
+ * variant bits to RFC 4122 (observed during protocol verification: OTel b8e9945f6b751f313e8d6a84fe3a2b1d -> AO
  * b8e9945f-6b75-4f31-be8d-6a84fe3a2b1d). The raw OTel ID is also kept as the record's "External Id".
  */
 public final class AoIds {

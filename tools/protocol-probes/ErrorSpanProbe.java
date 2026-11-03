@@ -1,6 +1,6 @@
-// Phase 2 P0 probe (local use only): isolates which error representation on a span makes Splunk AO drop the
+// Protocol verification probe (local use only): isolates which error representation on a span makes Splunk AO drop the
 // input/output of a trace. Sends one complete synthetic trace per variant in ONE OTLP request (like the official
-// SDK) and prints the trace IDs for read-back. Run with tools/p0/run-probe.sh ErrorSpanProbe.
+// SDK) and prints the trace IDs for read-back. Run with tools/protocol-probes/run-probe.sh ErrorSpanProbe.
 //
 // Variants (only the tool span differs):
 //   ok          no error information (baseline)

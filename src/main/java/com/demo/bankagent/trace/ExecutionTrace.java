@@ -10,7 +10,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Per-request record of what the backend really executed (agents, tools, LLM calls, drafts, Agent Control checks).
  * It is bound to the request thread and returned to the UI debug panel. This is plain diagnostics, not
- * OpenTelemetry: Phase 2 spans are created separately and only the trace ID is copied here for the UI.
+ * OpenTelemetry: spans are created separately and only the trace ID is copied here for the UI.
  */
 public final class ExecutionTrace {
 

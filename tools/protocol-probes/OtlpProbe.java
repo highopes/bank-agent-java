@@ -1,6 +1,6 @@
-// Phase 2 P0 probe (local use only): sends one synthetic, non-sensitive trace to the Splunk AO OTLP
+// Protocol verification probe (local use only): sends one synthetic, non-sensitive trace to the Splunk AO OTLP
 // endpoint with the official OpenTelemetry Java SDK and prints the trace/span IDs for read-back.
-// Run with tools/p0/run-probe.sh OtlpProbe. Credentials come from environment variables only.
+// Run with tools/protocol-probes/run-probe.sh OtlpProbe. Credentials come from environment variables only.
 //
 // Wire format follows splunk/splunk-ao-python@f7a20ed converter/attribute_mapping.py (o11y mode):
 // agent, llm, tool and control spans become plain OTLP spans with gen_ai.* / agent_control.* attributes.

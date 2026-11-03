@@ -10,7 +10,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 
 /**
- * Integration tests of Phase 2 Observe + Control: the real application context with spans recorded in memory and
+ * Integration tests of the Galileo instrumentation (Observe + Control): the real application context with spans recorded in memory and
  * a scripted Control gateway. CONTROL_MODE / OBSERVABILITY_ENABLED stay off, so no backend is ever contacted.
  */
 @Import({TestSupportConfig.class, InMemoryTelemetryConfig.class, GovernanceTestBase.ScriptedControlConfig.class})

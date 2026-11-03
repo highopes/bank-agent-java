@@ -3,7 +3,7 @@ package com.demo.bankagent.observability;
 /**
  * Span attribute names used by this application. The gen_ai.* names follow the OpenTelemetry GenAI semantic
  * conventions; together with galileo.span.kind / agent_control.* they are exactly the wire attributes that the
- * official splunk-ao-python SDK (f7a20ed, converter/attribute_mapping.py) emits in o11y mode, which P0 verified
+ * official splunk-ao-python SDK (f7a20ed, converter/attribute_mapping.py) emits in o11y mode, which the protocol verification confirmed
  * are parsed by Splunk AO into agent / llm / tool / control spans. bank.* attributes are application metadata
  * (shown by AO as span metadata).
  */
@@ -33,7 +33,7 @@ public final class GenAiAttributes {
     public static final String ERROR_TYPE = "error.type";
     /**
      * Integer step status (HTTP-like), the attribute the official SDK sets for a step status_code
-     * (attribute_mapping.set_common_attributes). Phase 2 validation: AO keeps it (like the OTel status) only as span
+     * (attribute_mapping.set_common_attributes). Validation: AO keeps it (like the OTel status) only as span
      * metadata; the record's status_code stayed 0, so the failure is visible via metadata, not via status_code.
      */
     public static final String AO_STATUS_CODE = "splunk_ao.status_code";

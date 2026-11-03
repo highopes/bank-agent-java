@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Runs a Phase 2 P0 probe (local use only) with the project's Java 21, Maven classpath and project
+# Runs a protocol verification probe (local use only) with the project's Java 21, Maven classpath and project
 # trust store. AO_REALM / AO_O11Y_TOKEN are read from the private galileo.properties into THIS process
 # only and are never printed.
-# Usage: tools/p0/run-probe.sh <OtlpProbe|ControlProbe> [-Dprobe.key=value ...] [args...]
+# Usage: tools/protocol-probes/run-probe.sh <OtlpProbe|ControlProbe|ErrorSpanProbe> [-Dprobe.key=value ...] [args...]
 set -euo pipefail
 source "$(dirname "$0")/../../scripts/lib/common.sh"
 
-PROBE="${1:?Usage: tools/p0/run-probe.sh <ProbeName> [-Dkey=value ...] [args...]}"
+PROBE="${1:?Usage: tools/protocol-probes/run-probe.sh <ProbeName> [-Dkey=value ...] [args...]}"
 shift
 require_java21
 prepare_truststore
@@ -16,7 +16,7 @@ _prop() { [ -r "$GALILEO_FILE" ] && awk -v key="$1" 'index($0, key"=")==1 {sub(/
 export AO_REALM="${AO_REALM:-$(_prop AO_REALM)}"
 export AO_O11Y_TOKEN="${AO_O11Y_TOKEN:-$(_prop AO_O11Y_TOKEN)}"
 
-CP_FILE="$BANK_AGENT_ROOT/target/p0-classpath.txt"
+CP_FILE="$BANK_AGENT_ROOT/target/protocol-probes-classpath.txt"
 if [ ! -s "$CP_FILE" ] || [ "$BANK_AGENT_ROOT/pom.xml" -nt "$CP_FILE" ]; then
   (cd "$BANK_AGENT_ROOT" && ./mvnw -B -q dependency:build-classpath -Dmdep.outputFile="$CP_FILE" -Dmdep.includeScope=runtime) >/dev/null
 fi
@@ -32,4 +32,4 @@ for a in "$@"; do
   case "$a" in -D*) SYS_PROPS+=("$a") ;; *) ARGS+=("$a") ;; esac
 done
 exec "$JAVA_HOME/bin/java" "${JVM_OPTS[@]}" ${SYS_PROPS[@]+"${SYS_PROPS[@]}"} -cp "$(cat "$CP_FILE")" \
-  "$BANK_AGENT_ROOT/tools/p0/$PROBE.java" ${ARGS[@]+"${ARGS[@]}"}
+  "$BANK_AGENT_ROOT/tools/protocol-probes/$PROBE.java" ${ARGS[@]+"${ARGS[@]}"}

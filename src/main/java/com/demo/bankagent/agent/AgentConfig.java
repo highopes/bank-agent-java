@@ -24,7 +24,7 @@ import org.springframework.context.annotation.Configuration;
  * Wires the three domain agents as LangChain4j AI services. The model decides when to call the
  * @Tool methods; tool executions are recorded into the request's ExecutionTrace.
  *
- * <p>Phase 2: the model and the tools are obtained through {@link StepGovernance}: each agent gets a
+ * <p>Instrumentation: the model and the tools are obtained through {@link StepGovernance}: each agent gets a
  * GovernedChatModel (LLM spans + LLM Control, step name "&lt;agent&gt;-agent") and every @Tool method a
  * GovernedToolExecutor (tool span + PRE/POST Control around the real method). The original afterToolExecution
  * and error handlers are unchanged.

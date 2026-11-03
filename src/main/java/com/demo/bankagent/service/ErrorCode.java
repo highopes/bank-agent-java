@@ -21,11 +21,11 @@ public enum ErrorCode {
     LOCAL_ACCESS_ONLY(HttpStatus.FORBIDDEN),
     LLM_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE),
     LLM_UPSTREAM_ERROR(HttpStatus.BAD_GATEWAY),
-    /** Phase 2: an Agent Control policy denied the step (never a technical failure). */
+    /** Agent Control: a policy denied the step (never a technical failure). */
     CONTROL_DENIED(HttpStatus.FORBIDDEN),
-    /** Phase 2: a STEER decision on a step that must not be changed automatically; the user has to adjust it. */
+    /** Agent Control: a STEER decision on a step that must not be changed automatically; the user has to adjust it. */
     CONTROL_STEER_REQUIRES_USER_ACTION(HttpStatus.CONFLICT),
-    /** Phase 2: Agent Control could not decide and the step is fail-closed (no new side effect). */
+    /** Agent Control could not decide and the step is fail-closed (no new side effect). */
     CONTROL_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR);
 

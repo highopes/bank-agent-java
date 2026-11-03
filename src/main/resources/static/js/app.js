@@ -308,7 +308,7 @@
     const controls = data.controlDecisions || [];
     if (controls.length) {
       const cls = { PROCEED: 'ok', PROCEED_UNCHECKED: 'warn', DENY: 'fail', STEER: 'warn', BLOCKED_UNAVAILABLE: 'fail' };
-      html += '<h4>Agent Control 检查</h4><table><tr><th>阶段 / 步骤</th><th>结果</th><th>耗时</th></tr>' + controls.map((c) =>
+      html += '<h4>Agent Control 检查</h4><table><tr><th>检查时机 / 步骤</th><th>结果</th><th>耗时</th></tr>' + controls.map((c) =>
         '<tr><td>' + escapeHtml(c.stage) + ' · ' + escapeHtml(c.stepName) + '<div class="args">' +
         escapeHtml((c.controlName ? c.controlName + ' · ' : '') + (c.reason || '')) + '</div></td><td class="' +
         (cls[c.verdict] || '') + '">' + escapeHtml(c.verdict) + (c.action ? '<div class="args">' + escapeHtml(c.action) + '</div>' : '') +

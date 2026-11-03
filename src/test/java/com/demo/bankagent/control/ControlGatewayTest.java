@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Contract test of the Java Agent Control adapter against a loopback mock of the Agent Control server, using
- * JSON fixtures recorded from the real Splunk AO SaaS in P0 (task book 9.1 ControlGatewayTest).
+ * JSON fixtures recorded from the real Splunk AO SaaS during protocol verification (task book 9.1 ControlGatewayTest).
  */
 class ControlGatewayTest {
 

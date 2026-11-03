@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Starts the Bank Agent with a project-local Java 21 and the private local configuration.
-# Usage: scripts/run.sh [--background] [--rebuild] [--observe] [--control] [--trace-content] [--phase2-off]
+# Usage: scripts/run.sh [--background] [--rebuild] [--observe] [--control] [--trace-content] [--galileo-off]
 #   --observe        OBSERVABILITY_ENABLED=true for this run only (OpenTelemetry export to the AO backend)
 #   --control        CONTROL_MODE=remote-api for this run only (Agent Control enforcement)
 #   --trace-content  DEMO_TRACE_CONTENT=true for this run only (fictional demo text is sent to AO)
-#   --phase2-off     force both Phase 2 switches off for this run (pure Phase 1 behaviour)
+#   --galileo-off    force both Galileo switches off for this run (the application without instrumentation)
 # The options only set environment variables of the started JVM; galileo.properties is never modified.
 set -euo pipefail
 source "$(dirname "$0")/lib/common.sh"
@@ -18,7 +18,7 @@ for arg in "$@"; do
     --observe) export OBSERVABILITY_ENABLED=true ;;
     --control) export CONTROL_MODE=remote-api ;;
     --trace-content) export DEMO_TRACE_CONTENT=true ;;
-    --phase2-off) export OBSERVABILITY_ENABLED=false CONTROL_MODE=off ;;
+    --galileo-off) export OBSERVABILITY_ENABLED=false CONTROL_MODE=off ;;
     -h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "Unknown option: $arg" ;;
   esac
@@ -46,12 +46,12 @@ else
 fi
 MODEL="${OPENAI_MODEL:-$(secrets_value OPENAI_MODEL || true)}"
 info "Model: ${MODEL:-gpt-5-nano (default)}"
-OBS="$(phase2_switch OBSERVABILITY_ENABLED false)"
-CTL="$(phase2_switch CONTROL_MODE off)"
-CONTENT="$(phase2_switch DEMO_TRACE_CONTENT false)"
-info "Phase 2: OBSERVABILITY_ENABLED=$OBS, CONTROL_MODE=$CTL, DEMO_TRACE_CONTENT=$CONTENT (settings: $BANK_AGENT_GALILEO_FILE)"
+OBS="$(galileo_switch OBSERVABILITY_ENABLED false)"
+CTL="$(galileo_switch CONTROL_MODE off)"
+CONTENT="$(galileo_switch DEMO_TRACE_CONTENT false)"
+info "Galileo: OBSERVABILITY_ENABLED=$OBS, CONTROL_MODE=$CTL, DEMO_TRACE_CONTENT=$CONTENT (settings: $BANK_AGENT_GALILEO_FILE)"
 if [ "$OBS" = "true" ] || [ "$CTL" = "remote-api" ]; then
-  info "Phase 2 is on: the application resolves the AO project/agent stream at startup and fails fast on bad settings."
+  info "Galileo instrumentation is on: the application resolves the AO project/agent stream at startup and fails fast on bad settings."
 fi
 
 ensure_jar "$REBUILD"
