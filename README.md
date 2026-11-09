@@ -44,7 +44,7 @@ scripts/stop.sh
 | 应用框架 | Spring Boot 3.5.16（Spring Framework 6.2.19） | Web MVC、Data JPA、Validation、Thymeleaf、Actuator |
 | AI 框架 | LangChain4j 1.23.0（`langchain4j`、`langchain4j-open-ai`） | AiServices、`@Tool`、ChatMemory、JSON Schema 结构化输出 |
 | LLM | OpenAI 官方 API，默认模型 **`gpt-5-nano`**（实测返回 `gpt-5-nano-2025-08-07`） | 低成本默认值；可通过私有配置切换 |
-| 数据库 | H2 2.3.232（文件模式） | 默认位于 `~/.local/share/bank-agent-java/h2/`（OneDrive 同步目录之外） |
+| 数据库 | H2 2.3.232（文件模式） | 默认位于 `~/.local/share/bank-agent-java/h2/` |
 | 前端 | Thymeleaf 单页 + 原生 JS/CSS | 无 Node / npm 依赖 |
 | Galileo 插桩：观测 | OpenTelemetry Java API/SDK + OTLP/HTTP Exporter 1.49.0（JDK HttpClient sender） | 开关 `OBSERVABILITY_ENABLED`；默认后端 Splunk AO SaaS（Splunk Observability Cloud） |
 | Galileo 插桩：运行时管控 | Agent Control REST Adapter（JDK `java.net.http.HttpClient`，Server Execution） | 开关 `CONTROL_MODE=off\|remote-api`，与观测开关相互独立 |
@@ -132,7 +132,7 @@ sequenceDiagram
 - 关键代码：`agent/SupervisorAgent.java`、`agent/LlmIntentRouter.java`、`agent/RoutingDecision.java`、`agent/AgentPrompts.java`（`supervisorPrompt`）。
 - **路由由 OpenAI 模型完成**，不是关键词匹配：`LlmIntentRouter` 把最近 8 轮会话历史 + 最新用户消息发给模型，并使用 **JSON Schema 严格结构化输出**（`intent ∈ {AGENTS, CLARIFY, OUT_OF_SCOPE, SMALL_TALK}`，`steps[{agent ∈ {ACCOUNT, TRANSACTIONS, PAYMENTS}, task}]`）。
 - Java 侧再做确定性校验与兜底：无效 JSON / 未知 Agent / 空任务 → `CLARIFY`（`fallback=true`）；步骤数上限 `max-route-steps=3`；**同一 Agent 只执行第一个步骤**（防止模型重复派发造成重复草稿）。
-- 跨领域问题（如"余额和最近五笔交易"）按步骤**顺序委派**，再由 Java 以 `**账户信息** / **交易记录** / **转账服务**` 分节确定性地合并答复。
+- 跨领域问题（如"余额和最近五笔交易"）按步骤**顺序委派**，再由 Java 以 **账户信息** / **交易记录** / **转账服务** 分节确定性地合并答复。
 - 委派输入的组合方式（防止 LLM 篡改用户意图）：
   - 单 Agent 回合：`[User message - authoritative]` 用户原话 + `[Supervisor note]` 路由任务；
   - 多 Agent 回合：只给每个 Agent `[Your part ...]` 它负责的那部分任务，避免 Agent 越界回答。
@@ -443,6 +443,7 @@ scripts/test.sh        # 等价于 ./mvnw -B clean verify（项目内选择 Java
 - **Control**：Console 中定义的 Agent Control 规则（Server execution）在 Java 中真实执行。受控步骤包括用户消息与最终回答（`banking-assistant`）、路由与各 Agent 的模型调用、全部 Tool、UI 确认（`payment.confirm`）。PRE 检查的 DENY 在写入前阻止（不生成草稿、不扣款）；POST DENY 不把结果交给前端；STEER 有限次改写；OBSERVE 只记录。服务不可用时，写步骤 fail-closed，只读步骤默认 fail-open 并明确标记为“未经检查”。规则修改后几秒内生效，无需重启。
 - **Controls 标签**：每个评估结果以官方格式的 control span 上报（与 `splunk-ao-python` SDK 相同的 OTLP 属性），Console 的 Controls 标签显示规则名、Triggered、Applies To、Evaluator、Trigger if 与 View control。
 - 没有使用 Python/Node sidecar，也没有调用非公开接口；所用协议在实现前先经实测验证（[`docs/galileo/PROTOCOL-VERIFICATION.md`](docs/galileo/PROTOCOL-VERIFICATION.md)）。
+- 对于这部分原理的阐述请见[`docs/galileo/JAVA-INSTRUMENTATION.md`](docs/galileo/JAVA-INSTRUMENTATION.md)。
 
 ### 11. 如何开启与配置
 
