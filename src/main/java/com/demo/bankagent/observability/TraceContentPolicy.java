@@ -20,7 +20,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
- * Decides what text may leave the process in spans (task book 3 / 7.2). Default (DEMO_TRACE_CONTENT=false): no
+ * Decides what text may leave the process in the spans this application writes (LangChain4jOtelBridge, the two
+ * business spans, control spans). Default (DEMO_TRACE_CONTENT=false): no
  * prompt, answer, tool argument value, beneficiary or amount is exported; spans carry a fixed placeholder (or only
  * argument NAMES) so that AO still shows a valid input/output. Opt-in (DEMO_TRACE_CONTENT=true, fictional demo data
  * only): text is masked (API keys, bearer tokens, long digit runs such as account numbers) and truncated.
@@ -44,10 +45,6 @@ public class TraceContentPolicy {
         this.capture = capture;
         this.maxChars = maxChars;
         this.mapper = mapper;
-    }
-
-    public boolean captures() {
-        return capture;
     }
 
     /** Free text (prompt, answer) as it may appear in a span. */
@@ -203,13 +200,5 @@ public class TraceContentPolicy {
             }
         }
         return sb.toString();
-    }
-
-    public List<String> argumentNames(JsonNode arguments) {
-        List<String> names = new ArrayList<>();
-        if (arguments != null && arguments.isObject()) {
-            arguments.fieldNames().forEachRemaining(names::add);
-        }
-        return names;
     }
 }

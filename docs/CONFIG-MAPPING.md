@@ -20,11 +20,33 @@
 
 ## 2. Galileo 插桩配置（`galileo.properties`）
 
-应用已实现以下全部推导规则与“按名称查找或创建”逻辑（`observability/AoEndpointResolver.java` 为唯一实现，`scripts/preflight.sh` 通过 `GalileoCli` 复用它）。两个开关关闭时，这些地址与凭据不会被使用，也不会发出任何请求。
+### 2.0 先看这里：只需要填两项
+
+| 类别 | 键 | 说明 |
+|---|---|---|
+| **必须填写**（Splunk AO SaaS） | `AO_REALM`、`AO_O11Y_TOKEN` | realm（如 `au0`）与 O11y Access Token（INGEST + API 权限）。文件 `0600`，放在仓库外 |
+| 开关（不必改文件） | `scripts/run.sh --observe` / `--control` / `--galileo-off` | 只对本次启动生效；也可在文件中写 `OBSERVABILITY_ENABLED=true`、`CONTROL_MODE=remote-api` |
+| 自动推导 | 其余全部 | OTLP 端点、请求头、REST / Agent Control 地址、Project / Agent Stream（不存在则创建） |
+| 高级覆盖 | 第 2.4 节 | 只在代理、专用环境等情况下填写 |
+
+**`OTEL_*` 从何而来**：Observe 由 OTel 官方 Java Agent 完成，它只认标准的 `OTEL_*` 设置。`scripts/run.sh --observe` 调用 `GalileoCli otel-env`（与应用使用同一个 `AoEndpointResolver`）把本文件翻译成 4 个标准变量，只导出到这次启动的 JVM，不打印：
+
+| 本文件的键 | → 标准变量（Java Agent 读取） | o11y 默认结果 |
+|---|---|---|
+| `AO_REALM`（或覆盖 `AO_OTLP_ENDPOINT`） | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `https://ingest.<realm>.observability.splunkcloud.com/v2/trace/otlp`（不是 `/v1/traces`） |
+| `AO_O11Y_TOKEN`（`AO_OTLP_AUTH_HEADER`）、`AO_PROJECT_NAME`、`AO_AGENT_STREAM` | `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | `X-SF-Token=<token>,project=bank-agent-java,logstream=bank-java-demo`（值按 OTel 规范做 URL 编码） |
+| `AO_PROJECT_NAME`、`AO_AGENT_STREAM` | `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment.name=local-demo,splunk_ao.project.name=…,splunk_ao.logstream.name=…` |
+| `OTEL_SERVICE_NAME` | `OTEL_SERVICE_NAME` | `bank-agent-java` |
+
+其余通用的 Agent 设置（导出协议、关闭 metrics / logs、关闭哪些自动采集模块）在仓库内的 [`config/otel-javaagent.properties`](../config/otel-javaagent.properties)，不含密钥。在你自己的应用中，直接设置这 4 个变量并加 `-javaagent` 即可，见 [`galileo/QUICKSTART.md`](galileo/QUICKSTART.md)。
+
+应用本身仍读取本文件，用于：Agent Control（地址、凭据、失败模式）、启动时按名称查找/创建 Project 与 Agent Stream、`/api/status` 与 UI 状态。推导规则只有一份实现（`observability/AoEndpointResolver.java`），`scripts/preflight.sh` 与 `scripts/run.sh` 通过 `GalileoCli` 复用它。两个开关都关闭时，这些地址与凭据不会被使用，也不会发出任何请求。
 
 **配置原则：凡是能按规则推导或能通过 API 获取的值，都不需要用户填写。** 用户只需在第 1 组中为**一种**后端填写凭据（1–2 项）；第 2 组已有可用默认值；第 3 组保留键名但值留空，留空即按当前后端的“推导规则”生成，只有需要覆盖时才填写。同名环境变量优先于文件。
 
 ### 2.1 支持的三种后端（配置档 `AO_BACKEND_PROFILE`）
+
+> Demo 默认且唯一经过在线验证的是选项 A。选项 B/C 属于高级用法：推导规则已实现并有离线测试，但**未在线验证**，不应视为可用于生产。
 
 | 选项 | 后端 | Console | 配置档 | 用户需填写 |
 |---|---|---|---|---|
@@ -52,7 +74,7 @@
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
-| `OBSERVABILITY_ENABLED` | `false` | OTel 总开关（已在 Splunk AO SaaS 上验证）；`scripts/run.sh --observe` 只对本次进程开启 |
+| `OBSERVABILITY_ENABLED` | `false` | Observe 开关：为 `true` 时 `scripts/run.sh` 挂载 OTel Java Agent，应用校验 AO 配置并准备 Project / Agent Stream；`scripts/run.sh --observe` 只对本次进程开启。实际是否在采集以 `/api/status` 的 `observability.otelJavaAgentActive` 为准 |
 | `CONTROL_MODE` | `off` | `off` / `remote-api`；与 OTel 开关相互独立（已在 Splunk AO SaaS 上验证）；`scripts/run.sh --control` 只对本次进程开启 |
 | `DEMO_TRACE_CONTENT` | `false` | 明确开启后才向后端发送虚构的输入/输出文本 |
 | `AO_PROJECT_NAME` / `AO_AGENT_STREAM` | `bank-agent-java` / `bank-java-demo` | 名称区分大小写，与 Golden Demo 隔离（Galileo 中称 Log Stream）。**不配置任何 ID**：应用启动时通过当前后端的 REST API 按名称查找，不存在则创建，并在内存中保存 UUID（与官方 SDK Logger 行为一致） |
@@ -64,9 +86,9 @@
 | `AO_BACKEND_PROFILE` | 自动判断，见 2.1 | 自动判断，见 2.1 | SDK `DeploymentMode` / 本项目 |
 | `AO_API_URL` | `https://app.${AO_REALM}.observability.splunkcloud.com/ao/api/`（SDK `O11yApiClient`：`app` 主机 + `/ao/api` + `X-SF-Token`，无 JWT 交换）。My Profile 中的 API Endpoint `https://api.${AO_REALM}…` 是 O11y 通用 REST API（`/v2/...`），实测也代理 `/ao/api/`，为与 SDK 一致使用 `app` 主机 | `app.galileo.ai` → `https://api.galileo.ai`；其他 Console 把 `console` 替换为 `api`，如 `https://api.multitenant.galileocloud.io` | SDK / G-SDK `set_api_url` |
 | `AO_O11Y_API_TOKEN` | 使用 `AO_O11Y_TOKEN`（机密，可选的专用 API Token） | 不使用 | Docs / SDK |
-| `AO_OTLP_ENDPOINT` | `https://ingest.${AO_REALM}.observability.splunkcloud.com/v2/trace/otlp` | `${AO_API_URL}/otel/traces`，如 `https://api.galileo.ai/otel/traces` | SDK / G-Docs |
-| `AO_OTLP_AUTH_HEADER` | `X-SF-Token`（值为 `AO_O11Y_TOKEN`） | `Galileo-API-Key`（值为 `AO_API_KEY`） | SDK / G-SDK `otel.py` |
-| `OTEL_SERVICE_NAME` | `bank-agent-java` | 同左 | 本项目 |
+| `AO_OTLP_ENDPOINT` | `https://ingest.${AO_REALM}.observability.splunkcloud.com/v2/trace/otlp`（→ `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`） | `${AO_API_URL}/otel/traces`，如 `https://api.galileo.ai/otel/traces` | SDK / G-Docs |
+| `AO_OTLP_AUTH_HEADER` | `X-SF-Token`（值为 `AO_O11Y_TOKEN`；→ `OTEL_EXPORTER_OTLP_TRACES_HEADERS`） | `Galileo-API-Key`（值为 `AO_API_KEY`） | SDK / G-SDK `otel.py` |
+| `OTEL_SERVICE_NAME` | `bank-agent-java`（→ 同名标准变量） | 同左 | 本项目 |
 | `AGENT_CONTROL_URL` | `https://app.${AO_REALM}.observability.splunkcloud.com/ao/agent-control` | `${AO_CONSOLE_URL}/api/agent-control`，如 `https://app.galileo.ai/api/agent-control`、`https://console.multitenant.galileocloud.io/api/agent-control`（GD 实测）。Galileo 专属环境若提供 `https://agent-control.<env>.galileo.ai`（G-Docs），在此覆盖 | Docs / GD / G-Docs |
 | `AGENT_CONTROL_EVALUATION_PATH` | `/api/v1/evaluation`（协议验证实测） | 同左（未在线验证） | 协议验证 |
 | `AGENT_CONTROL_API_KEY_HEADER` | `X-SF-Token` | `Galileo-API-Key`（GD 实测；G-Docs） | Docs / G-Docs |
@@ -77,13 +99,24 @@
 | `CONTROL_READ_FAILURE_MODE` / `CONTROL_WRITE_FAILURE_MODE` | `fail-open` / `fail-closed` | 同左 | 设计要求 |
 | `MAX_CONTROL_STEER_RETRIES` | `2` | 同左 | 设计要求 |
 
-### 2.5 已取消或变更的键
+### 2.5 Java Agent 自身的设置与高级覆盖
+
+| 设置 | 默认 | 说明 |
+|---|---|---|
+| Agent 版本 / 校验 | 2.33.1 / 固定 SHA-256（`scripts/lib/common.sh`） | 首次 `--observe` 时经 Maven Wrapper 下载到 `$BANK_AGENT_DATA_DIR/otel/`（仓库外）；校验失败则启动中止 |
+| `BANK_AGENT_OTEL_AGENT_JAR` | 空 | 离线时指定已有的 `opentelemetry-javaagent-2.33.1.jar`（同样校验 SHA-256） |
+| 任意标准 `OTEL_*` 环境变量 | — | 优先于 `config/otel-javaagent.properties`（例如 `OTEL_INSTRUMENTATION_JDBC_ENABLED=true` 开启 JDBC、`OTEL_TRACES_SAMPLER=…` 调整采样）；`run.sh` 会警告从 shell 继承的此类变量 |
+| `BANK_AGENT_JAVA_OPTS` | 空 | 额外 JVM 参数，例如 `-Dotel.javaagent.debug=true` 排查 Agent |
+
+旧版本中位于 `application.yml` 的采样率、批量大小、队列、导出超时等（`bank-agent.observability.*`）已删除：这些现在是 Java Agent 的标准设置。
+
+### 2.6 已取消或变更的键
 
 - `AGENT_CONTROL_TARGET_ID`：**不再是配置项**。它就是 Agent Stream 的 UUID，由应用启动时根据 `AO_PROJECT_NAME` / `AO_AGENT_STREAM` 解析（不存在则创建）得到。
 - `AO_LOG_STREAM`：由 `AO_AGENT_STREAM` 取代（Splunk AO 中“Log Stream”现称“Agent Stream”，Galileo 中仍称 Log Stream，含义相同）。
 - `AO_API_KEY`：仅用于 Galileo 后端（选项 B/C）；选项 A 使用 `AO_O11Y_TOKEN`。
 
-### 2.6 2026-11-02 实现前的只读检查（只确认地址和凭据可用，不等于协议验证）
+### 2.7 2026-11-02 实现前的只读检查（只确认地址和凭据可用，不等于协议验证）
 
 选项 A（`au0`，使用用户 Token，未创建任何对象）：
 
@@ -97,9 +130,9 @@
 - `https://app.galileo.ai/api/agent-control/health`、`https://console.multitenant.galileocloud.io/api/agent-control/health` 为 `200`（`healthy`，`8.15.0`）；随机路径为 `404`。选项 C 的 Agent Control 注册与 Project/Log Stream 查询已在 Golden Demo 中用真实 Key 验收（见其 `documentation/VALIDATION.md`）。
 - Galileo 公开 OpenAPI 声明接受 `Galileo-API-Key` 与 `Splunk-AO-API-Key` 两种 API Key 请求头，项目接口为 `/v2/projects`、`/v2/projects/paginated`、`/v2/projects/{project_id}/log_streams`。
 
-### 2.7 协议验证与在线验收结论（选项 A，`au0`）
+### 2.8 协议验证与在线验收结论（选项 A，`au0`）
 
-- OTLP：`/v2/trace/otlp` + `X-SF-Token` + 请求头 `project` / `logstream`（以及 Resource 属性 `splunk_ao.project.name` / `splunk_ao.logstream.name`）路由正确；使用 `agentstream` 会进入自动创建的 “Unassigned” Stream。
+- OTLP：`/v2/trace/otlp` + `X-SF-Token` + 请求头 `project` / `logstream`（以及 Resource 属性 `splunk_ao.project.name` / `splunk_ao.logstream.name`）路由正确；使用 `agentstream` 会进入自动创建的 “Unassigned” Stream。2026-11-09 用 OTel Java Agent 以标准 `OTEL_*` 变量发送，复核通过。
 - 创建接口：`POST /ao/api/projects`（重复名称 422）、`POST /ao/api/projects/{id}/log_streams`（重复名称 400）已实测，应用按“查找 → 不存在才创建 → 冲突则重新查找”执行。
 - Agent Control：`/health`、`initAgent`、`runtime-token-exchange`、`/api/v1/evaluation`、按 Agent 查询绑定规则均已实测；Control 结果通过 OTLP control span 上报，Console Controls 标签显示详情。
 - 选项 B/C（`galileo`）：推导规则已实现并有离线测试，**未在线验证**。
@@ -114,6 +147,7 @@
 
 - 私有文件位于仓库与 OneDrive 同步目录之外；仓库 `.gitignore` 忽略 `.env*`、`*secrets*`（模板除外）、`config/*.properties`（模板除外）、日志、数据库与 `target/`。
 - 脚本（`scripts/preflight.sh`）只报告"密钥是否存在"（布尔），从不打印密钥值；`/api/status` 只返回 `llmConfigured: true/false`。
+- `--observe` 时 AO Token 以标准变量 `OTEL_EXPORTER_OTLP_TRACES_HEADERS` 的形式只存在于应用 JVM 的环境中（不进入命令行参数、日志或任何文件）；同一用户的其他进程理论上可读取进程环境，这与官方 OTel 的配置方式相同。
 - 日志通过 `SecretMasker` 遮蔽 `sk-...`、`Bearer ...` 等模式；默认关闭 OpenAI 请求/响应全文日志。
 - 离线测试强制 `OPENAI_API_KEY=""`，把 `BANK_AGENT_SECRETS_FILE`、`BANK_AGENT_GALILEO_FILE` 指向不存在的文件，并清空全部 `AO_*` / `AGENT_CONTROL_*` 凭据、强制两个 Galileo 开关关闭，确保测试不读取私有配置、不调用真实 API。
 - Golden Demo 原文件在开始前记录了 SHA-256 基线，结束时复核未变（见 [`app/VALIDATION.md`](app/VALIDATION.md)，A09）。

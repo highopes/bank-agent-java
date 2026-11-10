@@ -7,7 +7,7 @@ import com.demo.bankagent.control.RemoteAgentControlGateway;
 import com.demo.bankagent.conversation.ConversationService;
 import com.demo.bankagent.observability.AoSettings;
 import com.demo.bankagent.observability.AoTargetHolder;
-import com.demo.bankagent.observability.BankTelemetry;
+import com.demo.bankagent.observability.GenAiSpans;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,18 +21,18 @@ public class StatusController {
     private final ConversationService conversationService;
     private final AoSettings ao;
     private final AoTargetHolder targets;
-    private final BankTelemetry telemetry;
+    private final GenAiSpans spans;
     private final ControlGateway controlGateway;
     private final ControlEventReporter controlEvents;
 
     public StatusController(BankAgentProperties properties, ConversationService conversationService, AoSettings ao,
-                            AoTargetHolder targets, BankTelemetry telemetry, ControlGateway controlGateway,
+                            AoTargetHolder targets, GenAiSpans spans, ControlGateway controlGateway,
                             ControlEventReporter controlEvents) {
         this.properties = properties;
         this.conversationService = conversationService;
         this.ao = ao;
         this.targets = targets;
-        this.telemetry = telemetry;
+        this.spans = spans;
         this.controlGateway = controlGateway;
         this.controlEvents = controlEvents;
     }
@@ -41,7 +41,7 @@ public class StatusController {
     public Map<String, Object> status() {
         Map<String, Object> status = new LinkedHashMap<>();
         status.put("application", "bank-agent-java");
-        status.put("features", "OpenTelemetry Observe + Agent Control (each switchable)");
+        status.put("features", "Observe (OpenTelemetry Java agent + LangChain4j listeners) + Agent Control (each switchable)");
         status.put("llmProvider", "OpenAI");
         status.put("llmConfigured", properties.openai().isConfigured());
         status.put("model", properties.openai().model());
@@ -59,6 +59,8 @@ public class StatusController {
     private Map<String, Object> observability() {
         Map<String, Object> o = new LinkedHashMap<>();
         o.put("enabled", ao.observabilityEnabled());
+        // True only when the OpenTelemetry Java agent is attached and spans are really recorded and exported.
+        o.put("otelJavaAgentActive", spans.active());
         o.put("profile", ao.profile().key());
         o.put("demoTraceContent", ao.demoTraceContent());
         if (ao.active()) {
@@ -72,17 +74,6 @@ public class StatusController {
             });
             targets.consoleStreamUrl().ifPresent(url -> o.put("consoleStreamUrl", url));
             targets.error().ifPresent(e -> o.put("targetError", e));
-        }
-        if (telemetry.exporting()) {
-            BankTelemetry.ExportStats stats = telemetry.stats();
-            o.put("exportedSpans", stats.exportedSpans());
-            o.put("failedExportBatches", stats.failedBatches());
-            if (stats.lastFailure() != null) {
-                o.put("lastExportFailure", stats.lastFailure());
-            }
-            if (stats.lastSuccessAt() != null) {
-                o.put("lastExportSuccessAt", stats.lastSuccessAt().toString());
-            }
         }
         return o;
     }

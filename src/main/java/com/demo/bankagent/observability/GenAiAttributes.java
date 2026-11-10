@@ -1,11 +1,12 @@
 package com.demo.bankagent.observability;
 
 /**
- * Span attribute names used by this application. The gen_ai.* names follow the OpenTelemetry GenAI semantic
- * conventions; together with galileo.span.kind / agent_control.* they are exactly the wire attributes that the
- * official splunk-ao-python SDK (f7a20ed, converter/attribute_mapping.py) emits in o11y mode, which the protocol verification confirmed
- * are parsed by Splunk AO into agent / llm / tool / control spans. bank.* attributes are application metadata
- * (shown by AO as span metadata).
+ * Span attribute names used by the hand-written parts of the instrumentation (LangChain4jOtelBridge, the two
+ * business spans and the Control span reporter). The gen_ai.* names follow the OpenTelemetry GenAI semantic
+ * conventions; with galileo.span.kind / agent_control.* they are the wire attributes that the official
+ * splunk-ao-python SDK (f7a20ed, converter/attribute_mapping.py) emits in o11y mode and that Splunk AO parses into
+ * agent / llm / tool / control spans (docs/galileo/PROTOCOL-VERIFICATION.md). bank.* attributes are application
+ * metadata (AO shows them as span metadata).
  */
 public final class GenAiAttributes {
 
@@ -16,7 +17,6 @@ public final class GenAiAttributes {
     public static final String PROVIDER_NAME = "gen_ai.provider.name";
     public static final String CONVERSATION_ID = "gen_ai.conversation.id";
     public static final String AGENT_NAME = "gen_ai.agent.name";
-    public static final String AGENT_DESCRIPTION = "gen_ai.agent.description";
     public static final String REQUEST_MODEL = "gen_ai.request.model";
     public static final String RESPONSE_MODEL = "gen_ai.response.model";
     public static final String RESPONSE_ID = "gen_ai.response.id";
@@ -31,12 +31,6 @@ public final class GenAiAttributes {
     public static final String TOOL_CALL_ARGUMENTS = "gen_ai.tool.call.arguments";
     public static final String TOOL_CALL_RESULT = "gen_ai.tool.call.result";
     public static final String ERROR_TYPE = "error.type";
-    /**
-     * Integer step status (HTTP-like), the attribute the official SDK sets for a step status_code
-     * (attribute_mapping.set_common_attributes). Validation: AO keeps it (like the OTel status) only as span
-     * metadata; the record's status_code stayed 0, so the failure is visible via metadata, not via status_code.
-     */
-    public static final String AO_STATUS_CODE = "splunk_ao.status_code";
 
     public static final String OP_INVOKE_AGENT = "invoke_agent";
     public static final String OP_CHAT = "chat";
@@ -62,10 +56,9 @@ public final class GenAiAttributes {
     // Application metadata.
     public static final String BANK_INTENT = "bank.intent";
     public static final String BANK_SELECTED_AGENTS = "bank.selected_agents";
-    public static final String BANK_ROUTE_FALLBACK = "bank.route.fallback";
-    public static final String BANK_OPERATION = "bank.operation";
     public static final String BANK_DRAFT_REF = "bank.draft.ref";
     public static final String BANK_OUTCOME = "bank.outcome";
-    public static final String BANK_CONTENT_CAPTURED = "bank.content.captured";
-    public static final String BANK_STEER_ATTEMPT = "bank.control.steer_attempt";
+    /** Set by the Control layer on the step it blocked (CONTROL_DENIED, CONTROL_STEER, CONTROL_UNAVAILABLE, ...). */
+    public static final String BANK_CONTROL_BLOCKED = "bank.control.blocked";
+    public static final String BANK_CONTROL_STEER_RETRIES = "bank.control.steer_retries";
 }

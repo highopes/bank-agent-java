@@ -30,7 +30,7 @@ if [ "$MODE" = "trace" ]; then
   run_galileo_cli trace "${TRACES[@]}"
   exit $?
 fi
-if ! curl -fsS -m 3 "http://$BANK_AGENT_HOST:$BANK_AGENT_PORT/actuator/health" >/dev/null 2>&1; then
+if ! port_in_use "$BANK_AGENT_PORT"; then
   die "The application is not running at http://$BANK_AGENT_HOST:$BANK_AGENT_PORT (start it with scripts/run.sh --background --observe)."
 fi
 info "Running Galileo smoke questions against http://$BANK_AGENT_HOST:$BANK_AGENT_PORT ..."

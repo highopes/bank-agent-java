@@ -1,374 +1,225 @@
 # Galileo Java 插桩教程（写给不熟悉 Java 的读者）
 
-目标：读完本文，你能看懂本项目是**在哪里、用什么方式**给 Java 代码加上 OpenTelemetry（OTel）观测和 Agent Control 门禁的，能自己运行一次并在 Splunk AO Console 中找到对应的 Trace。所有代码片段都摘自最终能编译、测试通过的源码。
+读完本文，你能说清楚：本项目的 Observe（观测）和 Control（管控）**各由谁完成、哪些是自动的、哪些必须手写、为什么**，并能自己运行一次、在 Splunk AO Console 中找到结果。所有代码片段都摘自当前能编译、测试通过的源码。只想要 5 分钟版本，请先读 [`QUICKSTART.md`](QUICKSTART.md)。
+
+## 0. 结论先行
+
+- **Observe 不需要逐个业务类写代码**：
+  - OTel（OpenTelemetry，开放遥测标准）**官方 Java Agent** 在启动时挂载，负责 HTTP 请求 Span、调用上下文、OTLP 导出——零代码；
+  - **LangChain4j 官方扩展点**（模型监听、AI Service 监听、Tool 前后钩子）由一个适配类 `LangChain4jOtelBridge` 翻译成 AO 能识别的 GenAI Span——注册一次；
+  - 只剩 **2 处手写 Span**（一轮对话的根、UI 确认扣款），因为框架里没有对应的事件。
+- **Control 必须在业务关口手写**：Agent Control 服务只给决策，拦截要由 Java 在动作发生**之前**完成；这不是 OTel 的自动插桩，也不是 Splunk 提供的 Java SDK，而是本项目基于已验证 REST 接口写的 Adapter。
+- **Control 结果要在 Console 中可见**，需要把评估结果写成 control span，经同一个 Java Agent 上报；这部分由 Control 层自动生成，业务代码不用管。
+
+```mermaid
+flowchart LR
+    subgraph AUTO["① OTel 官方 Java Agent（零代码）"]
+        HTTP["HTTP 请求 Span<br/>上下文传播<br/>OTLP 导出 / 批量 / Resource"]
+    end
+    subgraph FW["② LangChain4j 官方扩展点（注册一次）"]
+        L1["ChatModelListener → LLM Span"]
+        L2["AI Service 监听 → Agent Span"]
+        L3["before/afterToolExecution → Tool Span"]
+    end
+    subgraph MAN["③ 手写（2 处）"]
+        M1["ChatService：一轮对话的根 Agent"]
+        M2["PaymentController：UI 确认扣款"]
+    end
+    subgraph CTL["Control（业务关口，另行开关）"]
+        C1["PRE/POST 门禁"]
+        C2["Control Span"]
+    end
+    AUTO --> AO(("Splunk AO"))
+    FW --> AUTO
+    MAN --> AUTO
+    C2 --> AUTO
+```
 
 ## 1. 先认识几个 Java 概念
 
 | 概念 | 一句话解释 | 在本项目中的例子 |
 |---|---|---|
-| class（类） | 代码和数据的模板 | `ChatService` 处理一轮聊天 |
-| interface（接口） | 只规定“能做什么”，不规定“怎么做”；可以有多种实现 | `ControlGateway` 有 `RemoteAgentControlGateway`（真的调服务）和 `NoOpControlGateway`（关闭时什么也不做）两种实现 |
-| Spring Bean | 由 Spring 框架创建并管理的对象，整个应用通常只有一个 | 带 `@Component`、`@Configuration` 的类，或 `@Bean` 方法返回的对象 |
-| 构造器依赖注入 | 一个类需要别的对象时，把它们写在构造器参数里，Spring 自动传入 | `SupervisorAgent(IntentRouter router, DomainAgentGateway gateway, AgentSpanRunner spans)` |
-| 注解（annotation） | 以 `@` 开头的标记，让框架知道如何处理这段代码 | `@Tool` 告诉 LangChain4j“这个方法可以给模型调用”；`@PostMapping` 声明 HTTP 接口 |
-| Lambda | 可以当参数传递的一小段代码 | `memoryId -> prompts.systemPrompt(agent)` |
-| `try-with-resources` | `try (X x = ...) { }` 结束时**一定**会自动调用 `x.close()`，即使中途出错 | `try (Scope ignored = span.makeCurrent()) { ... }` 保证“当前 Span”一定被恢复 |
-| 异常（exception） | 出错时抛出、由上层 `catch` 处理的对象 | `ControlDeniedException`：Control 拒绝时抛出 |
-| `finally` | 无论成功或失败都会执行的代码块 | `span.end()` 放在 `finally` 里，Span 一定会结束 |
-| ThreadLocal | 每个线程各自一份的变量 | 应用原有的 `ExecutionTrace`（右侧“执行详情”面板的数据）存在 ThreadLocal 中 |
-| OTel Context | OTel 用来记住“当前是哪个 Span”的上下文，也绑定在当前线程上，但可以显式传递 | `span.makeCurrent()` 把 Span 设为当前；之后创建的 Span 自动以它为父 |
+| JVM / jar | Java 程序的运行环境 / 打包好的程序 | `java -jar target/bank-agent-java.jar` |
+| **Java Agent（`-javaagent`）** | 启动 JVM 时额外挂载的程序，可以在不改源码的情况下给常用库“加上”采集逻辑 | `java -javaagent:opentelemetry-javaagent.jar -jar …` |
+| Spring Bean | 由 Spring 框架创建并管理、全应用共享的对象 | `@Component`、`@Configuration`、`@Bean` |
+| LangChain4j AI Service | 用一个 Java 接口声明的 Agent，LangChain4j 负责调用模型和 Tool | `AccountAgent`、`PaymentsAgent` |
+| `@Tool` | 标记“这个 Java 方法可以给模型调用” | `AccountTools.getAccountBalance` |
+| **Listener / Hook（监听器 / 钩子）** | 框架在某件事前后主动通知你的回调 | `ChatModelListener.onRequest / onResponse` |
+| 装饰器（Decorator） | 把一个对象包起来，在调用前后加逻辑，对外接口不变 | `GovernedChatModel` 包装 `ChatModel`（只用于 Control） |
+| `try-with-resources` | `try (X x = …) {}` 结束时一定调用 `x.close()` | `try (Scope s = …)` 保证“当前 Span”一定被恢复 |
 
-ThreadLocal 与 OTel Context 的区别：前者是本项目自己的业务记录，只服务于 UI；后者是 OTel 的标准机制，决定 Span 的父子关系并随 Trace 发往 AO。两者并存，互不替代。
+OTel 的三个概念：**Trace**（一次请求的整棵树）、**Span**（一个步骤）、**Context / Scope**（“当前是哪个 Span”，决定新 Span 的父节点）。
 
-## 2. OTel 的四个核心对象
+## 2. 第一层：只开 Observe
 
-```mermaid
-flowchart LR
-    T["Trace<br/>一次完整的请求，例如一轮聊天<br/>trace_id = 32 位十六进制"] --> S1["Span：invoke_agent BankingAssistant<br/>span_id、parent = 无（根）"]
-    S1 --> S2["Span：invoke_agent SupervisorAgent<br/>parent = BankingAssistant"]
-    S2 --> S3["Span：chat gpt-5-nano<br/>parent = SupervisorAgent"]
-    S2 --> S4["Span：invoke_agent AccountAgent"]
-    S4 --> S5["Span：execute_tool getAccountBalance"]
-    S5 --> S6["Span：bank-java-observe-tool-usage<br/>（control span）"]
-```
+### 2.1 OTel 官方 Java Agent【OTel 官方】——零代码
 
-- **Trace**：一次请求的全部步骤，所有 Span 共享同一个 `trace_id`。
-- **Span**：一个步骤，有开始/结束时间、名称、属性（attributes）、状态，以及父 Span 的 `span_id`。
-- **Scope**：`span.makeCurrent()` 返回的对象，表示“在这段代码里，这个 Span 是当前 Span”；关闭 Scope 就恢复原来的当前 Span。
-- **Exporter**：把结束的 Span 发出去。本项目用 OTLP/HTTP Exporter 发到 Splunk AO；测试中用 `InMemorySpanExporter` 收集在内存里检查。
+- **做什么**：
+  - 每个 HTTP 请求一个 SERVER Span（如 `POST /api/chat`），作为 Trace 的根；AO 中显示为 `http` 类型节点；
+  - 在线程中维护 OTel Context，应用里任何 `Span.current()` 都能拿到正确的父节点；
+  - 提供 SDK、批量导出器、OTLP/HTTP protobuf 发送、Resource（服务名、路由属性）；
+  - 把应用代码使用的 OTel API 接到它自己的 SDK 上（应用只依赖 `opentelemetry-api`，没有 SDK）。
+- **怎么启用**：`scripts/run.sh --observe` 只对本次启动的 JVM 加 `-javaagent`，不改 JDK、不设置全局 `JAVA_TOOL_OPTIONS`：
+  - 版本 **2.33.1**、SHA-256 固定（`scripts/lib/common.sh`）；首次通过 Maven Wrapper 从 Maven Central 下载到 `~/.local/share/bank-agent-java/otel/`（仓库外），之后复用；校验失败或下载失败时**启动中止**，不会假装已观测；离线可用 `BANK_AGENT_OTEL_AGENT_JAR=<路径>` 指定已有的 jar（同样校验）。
+  - 非机密的通用设置在 [`config/otel-javaagent.properties`](../../config/otel-javaagent.properties)（`-Dotel.javaagent.configuration-file=…`）；
+  - AO 专属的 4 个标准变量由 `GalileoCli otel-env` 从私有 `galileo.properties` 推导（与应用使用同一套推导规则 `AoEndpointResolver`），只导出到这次 JVM 的环境，**从不打印**：
 
-**自动插桩 vs 手工插桩**：OTel Java Agent（`-javaagent:…`）可以在不改代码的情况下记录 HTTP、JDBC 等通用调用，但它不知道“哪个是 Supervisor、哪个是 Agent、哪个是 Tool”，也无法在 Tool 执行**前**做 Control 门禁。因此本项目使用**手工插桩**：在业务边界处用 OTel API 显式创建 Span。
+| 标准变量 | o11y（Splunk AO SaaS）的值 | 来源 |
+|---|---|---|
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `https://ingest.<realm>.observability.splunkcloud.com/v2/trace/otlp` | `AO_REALM` 推导（可用 `AO_OTLP_ENDPOINT` 覆盖） |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | `X-SF-Token=<token>,project=<项目名>,logstream=<Agent Stream 名>` | `AO_O11Y_TOKEN`、`AO_PROJECT_NAME`、`AO_AGENT_STREAM` |
+| `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment.name=local-demo,splunk_ao.project.name=…,splunk_ao.logstream.name=…` | 同上 |
+| `OTEL_SERVICE_NAME` | `bank-agent-java` | 默认值（可覆盖） |
 
-## 3. 依赖与 SDK 配置
+- **关掉了哪些自动采集、为什么**（`config/otel-javaagent.properties`，均有注释）：
 
-`pom.xml`（版本 1.49.0 由 Spring Boot 3.5.16 的 BOM 统一管理，无需写版本号）：
+| Agent 模块 | 处理 | 原因（均经 PoC 实测） |
+|---|---|---|
+| Tomcat / Spring Web MVC | **保留** | HTTP 入口、路由、状态码、总耗时；AO 显示为 `http` 根节点 |
+| `java-http-client` | 关闭 | LangChain4j 调 OpenAI 的 HTTP 请求会变成第二个、没有 AI 语义的 `POST` Span，与 LLM Span 重复；也会采集 Agent Control / AO REST 调用 |
+| `spring-data`、`hibernate` | 关闭 | 一次查询会产生 Repository → Hibernate → JDBC 三层嵌套 Span |
+| `jdbc` | 关闭（可选开启） | 能用：SQL（参数已脱敏）自动挂在 Tool 下，AO 显示为 `workflow` 节点。但①启动时建表/初始化数据的 SQL 不在任何请求内，每条变成一个独立 Trace；②嵌入式 H2 文件库的 Span 名、`db.namespace`、`db.connection_string` 含本机文件路径（含用户名）。连接 PostgreSQL 等服务器数据库时，设置 `OTEL_INSTRUMENTATION_JDBC_ENABLED=true` 即可开启 |
+| metrics / logs 导出 | 关闭 | AO 端点只接收 Trace |
 
-```xml
-<dependency>
-    <groupId>io.opentelemetry</groupId>
-    <artifactId>opentelemetry-api</artifactId>
-</dependency>
-<dependency>
-    <groupId>io.opentelemetry</groupId>
-    <artifactId>opentelemetry-sdk</artifactId>
-</dependency>
-<dependency>
-    <groupId>io.opentelemetry</groupId>
-    <artifactId>opentelemetry-exporter-otlp</artifactId>
-    <exclusions>
-        <exclusion>
-            <groupId>io.opentelemetry</groupId>
-            <artifactId>opentelemetry-exporter-sender-okhttp</artifactId>
-        </exclusion>
-    </exclusions>
-</dependency>
-<dependency>
-    <groupId>io.opentelemetry</groupId>
-    <artifactId>opentelemetry-exporter-sender-jdk</artifactId>
-</dependency>
-<!-- 测试：InMemorySpanExporter -->
-<dependency>
-    <groupId>io.opentelemetry</groupId>
-    <artifactId>opentelemetry-sdk-testing</artifactId>
-    <scope>test</scope>
-</dependency>
-```
+### 2.2 LangChain4j 官方扩展点【LangChain4j 官方 + 本项目适配类】——注册一次
 
-用 JDK 自带的 HTTP 发送器替换 OkHttp：少引入一批依赖，并且和 OpenAI 调用共用 `scripts/run.sh` 生成的项目专用 truststore（公司 TLS 检查环境必需）。
+LangChain4j 1.23.0 在三个位置提供官方回调，本项目用一个类 `observability/LangChain4jOtelBridge` 把它们翻译成 OTel GenAI 语义约定的 Span（`gen_ai.*` 属性，AO 据此识别类型）：
 
-SDK 在 `observability/OtelConfiguration.java` 中创建（节选）：
+| LangChain4j 回调 | 触发时机 | 生成 | AO 类型 |
+|---|---|---|---|
+| `ChatModelListener.onRequest` / `onResponse` / `onError` | 每次模型调用之前 / 之后 / 出错 | `chat <model>`：模型、真实 token、结束原因 | `llm` |
+| AI Service 监听：`AiServiceStartedListener` / `CompletedListener` / `ErrorListener` | Agent 调用开始 / 结束 / 出错 | `invoke_agent <AccountAgent…>` | `agent` |
+| `beforeToolExecution` / `afterToolExecution` | Tool Java 方法**运行之前** / 之后 | `execute_tool <工具名>` | `tool` |
+
+注册位置只有两处（`llm/LlmConfig.java`、`agent/AgentConfig.java`）：
 
 ```java
-OtlpHttpSpanExporter otlp = OtlpHttpSpanExporter.builder()
-        .setEndpoint(settings.otlpEndpoint().value())          // https://ingest.<realm>…/v2/trace/otlp
-        .setTimeout(tuning.exportTimeout())
-        .addHeader(settings.otlpAuthHeader().value(), settings.otlpAuthValue().value())  // X-SF-Token
-        .addHeader("project", project)                           // 按名称路由到 Project
-        .addHeader("logstream", stream)                          // 按名称路由到 Agent Stream
-        .build();
-Resource resource = Resource.getDefault().merge(Resource.create(Attributes.builder()
-        .put("service.name", settings.serviceName().value())
-        .put(settings.projectRoutingAttribute(), project)        // splunk_ao.project.name
-        .put(settings.streamRoutingAttribute(), stream)          // splunk_ao.logstream.name
-        .build()));
-SdkTracerProvider provider = SdkTracerProvider.builder()
-        .setResource(resource)
-        .addSpanProcessor(BatchSpanProcessor.builder(new BankTelemetry.StatsSpanExporter(otlp, stats))
-                .setScheduleDelay(tuning.batchScheduleDelay())   // 默认 2 秒批量发送，不阻塞业务请求
-                .build())
-        .build();
+// LlmConfig：模型上注册一次（UI 执行详情 + GenAI Span）
+OpenAiChatModel.builder() ... .listeners(List.of(new TraceChatModelListener(), otel));
+
+// AgentConfig：每个 AI Service 构建时注册一次（三个 Agent 共用同一段代码）
+AiServices.builder(type)
+        .chatModel(control.chatModel(chatModel, StepCatalog.agentStep(agent)))   // Control 关闭时就是原模型
+        ...
+        .registerListeners(otel.aiServiceListeners())        // Agent Span
+        .beforeToolExecution(otel::toolStarted)               // Tool Span 开始
+        .afterToolExecution(execution -> {
+            recordToolExecution(execution);                   // 原有的 UI 执行详情
+            otel.toolFinished(execution);                     // Tool Span 结束
+        })
 ```
 
-`OBSERVABILITY_ENABLED=false` 时不创建 SDK，`BankTelemetry.noop()` 返回一个什么也不做的 Tracer：所有插桩代码照常运行，但不产生任何 Span、不发任何网络请求，行为与没有插桩时完全一致（`ControlDisabledRegressionIT` 验证）。
+几个关键事实（读过 LangChain4j 1.23.0 源码、并用测试验证）：
 
-## 4. 插桩的通用写法
+- 这些回调都在**调用线程上同步**执行，开始/结束成对出现（`ChatModel.chat` 用 try/catch 包住模型调用；Tool 前后钩子包住 Tool 执行器）。所以 Span 在“开始”回调中被设为当前、在“结束”回调中恢复，子节点（例如 Control Span）自然挂在正确的父节点下。
+- LLM Span 在**模型调用之前**开始（`onRequest`），不是用事后回调倒推时间；Tool Span 在 **Java 方法运行之前**开始（`beforeToolExecution`）。框架的 `ToolExecutedEvent` 只在执行后触发，所以没有用它。
+- 万一某个“结束”回调因严重错误没有执行，`GenAiSpans.makeCurrent` 返回的 Scope 在外层关闭时会修复线程上的 Context，泄漏的 Span 不会成为后续请求的父节点（`OtelSpanStructureIT` 断言每次请求后 Context 为空）。
+- 没有挂载 Java Agent 时，OTel API 是空实现，适配类的每个回调直接返回，不产生任何开销和网络请求。
 
-所有 Agent Span 都由 `observability/AgentSpanRunner.java` 创建，写法固定为四步：
+### 2.3 两处手写 Span【本项目】——以及为什么无法自动
 
-```java
-Span span = spans.startAgent("SupervisorAgent", conversationId, message);   // 1. 在执行前创建 Span
-try (Scope ignored = span.makeCurrent()) {                                   // 2. 设为当前 Span
-    SupervisorResult result = route(...);                                    //    内部创建的 Span 自动成为子 Span
-    spans.setOutput(span, result.answer());
-    return result;
-} catch (RuntimeException e) {
-    AgentSpanRunner.recordFailure(span, e);                                  // 3. 记录失败（error.type + ERROR 状态）
-    throw e;
-} finally {
-    span.end();                                                              // 4. 一定结束 Span
-}
-```
+| 文件 | Span | 为什么框架给不了 |
+|---|---|---|
+| `conversation/ChatService.java` | `invoke_agent BankingAssistant`（一轮对话的根；带 `gen_ai.conversation.id` → AO Session） | 一轮 = Supervisor 路由 + 0–3 个 AI Service，是应用自己的编排，不是一次框架调用；Session 归属和 `banking-assistant` 的 Control 都需要这一个节点 |
+| `api/PaymentController.java` | `execute_tool payment.confirm`（UI 点击确认，独立 Trace） | 扣款由用户按钮触发，不是 LangChain4j Tool 调用，没有框架事件；需要它带会话 ID 进入同一 Session，并作为 `payment.confirm` 的 Control 挂载点 |
 
-`recordFailure` 刻意**不调用** `span.recordException(e)`：那会把完整堆栈（可能包含输入内容）导出到 AO。这里只导出错误码和经过遮蔽的简短说明。
-
-## 5. 真实类的“修改前 / 修改后”
-
-### 5.1 `conversation/ChatService.java`：一轮聊天的根 Span
-
-修改前（插桩前）：
+`ChatService` 中的全部 Observe 代码（约 9 行，节选）：
 
 ```java
-ExecutionTrace trace = ExecutionTrace.begin(conversation.getId());
-trace.setUserMessage(message);
-try {
-    List<Conversation.Turn> history = conversation.recentTurns(...);
-    SupervisorAgent.SupervisorResult result = supervisor.handle(conversation.getId(), message, history);
-    conversationService.recordUserMessage(conversation, message);
-    conversationService.recordAssistantMessage(conversation, result.answer());
-    ...
-} finally {
-    ExecutionTrace.end();
-    conversation.lock().unlock();
-}
-```
-
-修改后（插桩后）：
-
-```java
-ExecutionTrace trace = ExecutionTrace.begin(conversation.getId());
-trace.setUserMessage(message);
-Span root = spans.startAgent(ROOT_AGENT, conversation.getId(), message);       // + 根 Span：invoke_agent BankingAssistant
-try (Scope ignored = root.makeCurrent()) {
-    trace.setTraceId(AgentSpanRunner.currentTraceId());                        // + 把 trace_id 返回给 UI/API
-    List<Conversation.Turn> history = conversation.recentTurns(...);
-    Turn turn = governedTurn(conversation.getId(), message, history);         // + PRE Control → Supervisor → POST Control
-    conversationService.recordUserMessage(conversation, turn.inputWithheld() ? WITHHELD_USER_MESSAGE : message);
-    conversationService.recordAssistantMessage(conversation, turn.answer());
+Span root = spans.startAgent(ROOT_AGENT, conversation.getId(), message);
+try (Scope ignored = GenAiSpans.makeCurrent(root, conversation.getId())) {
+    trace.setTraceId(GenAiSpans.traceId(root));                 // UI 显示 Trace ID
+    ... 原有业务逻辑 ...
     root.setAttribute(GenAiAttributes.BANK_INTENT, turn.intent());
-    spans.setOutput(root, turn.answer());
-    ...
+    spans.setOutput(root, turn.answer());                       // 默认只导出占位符
 } catch (RuntimeException e) {
-    AgentSpanRunner.recordFailure(root, e);
+    GenAiSpans.recordFailure(root, e);                          // error.type，不导出堆栈
     throw e;
 } finally {
     root.end();
-    ExecutionTrace.end();
-    conversation.lock().unlock();
 }
 ```
 
-`gen_ai.conversation.id` 设为会话 ID，AO 据此把同一会话的多轮 Trace 归入同一个 Session。
+其他业务类——`SupervisorAgent`、`LangChainDomainAgentGateway`、所有 `@Tool`、Service、Repository、数据库——**没有任何 Observe 代码**；`SupervisorAgent`、`LangChainDomainAgentGateway`、`DemoResetService` 已恢复为插桩前的原样。
 
-### 5.2 `agent/SupervisorAgent.java` 与 `agent/LangChainDomainAgentGateway.java`：Agent Span
+## 3. 第二层：加 Control 评估
 
-Supervisor 的 `handle(...)` 被包进 `invoke_agent SupervisorAgent`（写法同第 4 节）。领域 Agent 的委派修改如下：
+### 3.1 Agent Control 服务【Splunk AO 平台】
 
-```java
-// 修改前
-try {
-    return switch (agent) {
-        case ACCOUNT -> accountAgent.chat(conversationId, task);
-        ...
-    };
-} catch (RuntimeException e) {
-    throw LlmErrorTranslator.translate(e);
-} finally { ... }
+- 保存规则（作用范围、条件、动作），对每个评估请求返回决策：DENY / STEER / OBSERVE；
+- **不会**中断 Java 程序、不会回滚数据库。规则改动无需重启应用（应用每次实时评估）。
 
-// 修改后
-Span span = spans.startAgent(spanAgentName(agent), conversationId, task);   // invoke_agent AccountAgent
-try (Scope ignored = span.makeCurrent()) {
-    String answer = switch (agent) {
-        case ACCOUNT -> accountAgent.chat(conversationId, task);           // 其中的 LLM / Tool Span 成为子 Span
-        ...
-    };
-    spans.setOutput(span, answer);
-    return answer;
-} catch (RuntimeException e) {
-    RuntimeException translated = LlmErrorTranslator.translate(e);
-    AgentSpanRunner.recordFailure(span, translated);
-    throw translated;
-} finally {
-    span.end();
-    ...
-}
-```
+### 3.2 门禁执行点【本项目，必须手写】
 
-### 5.3 LLM 调用：为什么不用 `TraceChatModelListener`
-
-应用原有的 `llm/TraceChatModelListener.java`（只改了类注释）实现了 LangChain4j 的 `ChatModelListener`，它的 `onResponse` 在模型**返回之后**才被调用。它适合给 UI 记录 token 和耗时，但不适合做 Span：
-
-- Span 需要在调用**开始前**创建并设为当前，才能拥有正确的开始时间和父子关系；
-- PRE Control 必须在请求发给 OpenAI **之前**执行，监听器做不到“阻止调用”。
-
-因此新增装饰器 `governance/GovernedChatModel.java`：它实现与真实模型相同的 `ChatModel` 接口，包住真实的 OpenAI 模型，只覆盖 `doChat(...)`：
-
-```java
-// agent/AgentConfig.java —— 修改前
-return AiServices.builder(type)
-        .chatModel(chatModel)
-        .tools(tools)
-        ...
-// 修改后：模型和工具都“包一层”，其余配置不变
-return AiServices.builder(type)
-        .chatModel(governance.governChatModel(chatModel, StepCatalog.agentStep(agent)))
-        .tools(governance.governTools(tools))
-        ...
-```
-
-`GovernedChatModel.doChat` 在每次真实模型调用前创建 `chat <model>` Span（`SpanKind.CLIENT`），执行 PRE Control，调用真实模型，记录 `gen_ai.usage.input_tokens/output_tokens`、`gen_ai.response.model`、`finish_reasons`，再执行 POST Control。真实模型自己的监听器（`TraceChatModelListener`）照常触发，UI 数据不受影响；装饰器的 `listeners()` 返回空列表，避免同一监听器被触发两次。Supervisor 的路由模型（`LlmIntentRouter`）也用同样方式包装，步骤名 `supervisor-router`。
-
-### 5.4 只读 Tool：`tool/AccountTools.getAccountBalance`
-
-**Tool 类本身没有任何修改**：
-
-```java
-@Tool(name = "getAccountBalance", value = "Get the current balance and currency of the customer's demo account(s).")
-public String getAccountBalance(@ToolMemoryId String conversationId,
-                                @P(value = "Which account: CHECKING (活期, default), SAVINGS (储蓄) or ALL", required = false)
-                                String accountType) {
-    ...
-}
-```
-
-`@Tool` 只是告诉 LangChain4j“这个方法可以给模型调用”，它**不是** OTel 插桩，也不会产生任何 Span。插桩由 `governance/StepGovernance.governTools(...)` 完成：它为每个 `@Tool` 方法构造 LangChain4j 的默认执行器，再用 `GovernedToolExecutor` 包一层：
-
-```java
-// governance/GovernedToolExecutor.executeWithContext（节选）
-Span span = tracer.spanBuilder("execute_tool " + toolName) ... .startSpan();
-try (Scope ignored = span.makeCurrent()) {
-    ControlOutcome pre = runner.check(ControlStage.PRE, step);           // ① PRE：方法执行前
-    switch (pre.verdict()) {
-        case DENY: return blocked(span, "CONTROL_DENIED", "... The tool was NOT executed ...", pre);
-        case STEER: ...
-        case BLOCKED_UNAVAILABLE: return blocked(span, "CONTROL_UNAVAILABLE", ..., pre);
-        default: break;
-    }
-    ToolExecutionResult result = delegate.executeWithContext(request, context);   // ② 真正的 Java 方法
-    ...
-    ControlOutcome post = runner.check(ControlStage.POST, step.withOutput(parse(text)));   // ③ POST：结果交给模型前
-    ...
-} finally {
-    span.end();
-}
-```
-
-为什么不能用应用原有的 `afterToolExecution` 回调做 Control：它在 Tool **执行完成之后**才被调用，此时转账草稿已经写入数据库，无法实现 PRE 阻止。`afterToolExecution` 继续用于 UI 的执行详情记录。
-
-### 5.5 写 Tool：`tool/PaymentTools.createTransferDraft`
-
-同样**没有修改 Tool 方法**，它走与 5.4 相同的 `GovernedToolExecutor`。区别在于它被 `StepCatalog` 标记为写步骤：
-
-- PRE 不可用时默认 **fail-closed**，方法不执行，不产生草稿；
-- PRE STEER 时本轮锁定该 Tool，要求用户自己修改请求，模型不能自行改金额或收款人；
-- POST 被 DENY / STEER / 不可用时，`tool/TransferToolSideEffects.java` 把刚创建的草稿撤回（`PaymentService.withdrawByControl`，状态 CANCELLED，审计码 `CONTROL_WITHDRAWN`），UI 卡片显示“已撤回，未扣款”。
-
-### 5.6 UI 确认：`api/PaymentController.confirm`
-
-修改前：
-
-```java
-public ConfirmationResult confirm(@PathVariable String draftId, @Valid @RequestBody DraftActionRequest request) {
-    requireValidId(draftId);
-    String conversationId = request.conversationId();
-    String customerId = conversationService.requireCustomerId(conversationId);
-    try {
-        ConfirmationResult result = paymentService.confirm(draftId, conversationId, customerId);
-        ...
-        return result;
-    } catch (BankingException e) { ... throw e; }
-}
-```
-
-修改后（节选）：
-
-```java
-public ConfirmationResult confirm(@PathVariable String draftId, @Valid @RequestBody DraftActionRequest request,
-                                  HttpServletResponse response) {
-    Span span = businessSpan(StepCatalog.PAYMENT_CONFIRM, "confirm", draftId, request.conversationId());
-    try (Scope ignored = span.makeCurrent()) {
-        traceHeaders(span, response, "confirm");                       // X-Bank-Trace-Id / X-Bank-AO-Trace-Id
-        ...
-        ControlStep step = confirmStep(draftId, conversationId, customerId);
-        if (step != null) {
-            enforcePreConfirm(step, draftId, conversationId, customerId); // DENY→403、STEER→409、不可用→503，均在扣款前
-        }
-        ConfirmationResult result = paymentService.confirm(draftId, conversationId, customerId);   // 扣款（原逻辑不变）
-        ...
-        if (step != null) {
-            control.check(ControlStage.POST, step.withOutput(output));   // 只审计，扣款不会被“撤销”
-        }
-        return result;
-    } catch (RuntimeException e) {
-        AgentSpanRunner.recordFailure(span, e);
-        throw e;
-    } finally {
-        span.end();
-    }
-}
-```
-
-`payment.confirm` 是一个**新的根 Span**（`setNoParent()`），因为用户点击按钮是一次独立的请求，不应伪装成之前聊天回合的子步骤。它通过 Span **link** 指向创建草稿的那个 Tool Span，并带有相同的 `gen_ai.conversation.id`，因此在 AO 中与聊天位于同一个 Session（[`VALIDATION.md`](VALIDATION.md) 截图 3）。
-
-## 6. 本地验证 Span 结构（不联网）
-
-`OtelSpanStructureIT` 用 `InMemorySpanExporter` 替代 OTLP Exporter，检查真实请求路径产生的 Span：
-
-```java
-model.routeTo("ACCOUNT", "查询活期余额")                         // 脚本化的模型（不调用 OpenAI）
-        .toolCall("getAccountBalance", "{\"accountType\":\"CHECKING\"}")
-        .answer("您的活期账户余额为 52,368.50 元。");
-ChatService.ChatTurnResult result = chatService.chat(null, "我现在的活期账户余额是多少？");   // 真实的 Java 调用链
-
-List<SpanData> all = spans.getFinishedSpanItems();
-SpanData root = one(all, "invoke_agent BankingAssistant");
-SpanData tool = one(all, "execute_tool getAccountBalance");
-assertThat(root.getParentSpanId()).isEqualTo(SpanId.getInvalid());
-assertThat(all).allSatisfy(s -> assertThat(s.getTraceId()).isEqualTo(root.getTraceId()));
-// 其余断言：父子关系、gen_ai.* 属性、token、默认不导出正文、错误状态、不同会话不共享 trace_id …
-```
-
-```bash
-./mvnw -B -Dit.test=OtelSpanStructureIT -Dtest=none -Dsurefire.failIfNoSpecifiedTests=false verify
-```
-
-## 7. 在真实 AO 中查看
-
-```bash
-scripts/run.sh --background --observe            # 只开 Observe
-scripts/galileo-smoke.sh --yes                   # 问 3 个只读问题，约 1 分钟后在终端回读 Span 树（真实 OpenAI，少量费用）
-scripts/galileo-smoke.sh --trace <traceId>       # 只读：回读任意一条已有 Trace，并打印它所属的 AO Session
-```
-
-`/api/chat` 的响应和 UI 右侧“执行详情”都会显示 `traceId`（OTel）与 `aoTraceId`（AO UUID）。在 Console 中：
-
-1. 打开 Project `bank-agent-java` → Agent Stream `bank-java-demo` → **Tracing**（`/api/status` 中的 `consoleStreamUrl` 可直接打开）；
-2. 在 **Sessions** 视图中，最新的会话就是刚才的对话；**Traces** 视图按时间列出 Trace，External Id 列就是 UI 显示的 `traceId`；
-3. 进入 Trace 后的 **Messages** 视图显示父子树：根 `invoke_agent BankingAssistant` → `invoke_agent SupervisorAgent` → `chat gpt-5-nano`（路由）→ `invoke_agent AccountAgent` → `chat` / `execute_tool …` → 盾牌图标的 control span；
-4. 选中 LLM span，右侧 **System Metrics** 显示 Num Input/Output Tokens、Latency、Cost；
-5. 失败步骤的 span metadata 中有 `error.type` 与 `otel.status_code: ERROR`（AO 目前不把它映射为记录的状态码，见 [`VALIDATION.md`](VALIDATION.md) K2）。
-
-演示时如何快速定位某一条 Trace（包括直接打开 Trace 的链接格式），见 [`../demo/DEMO-GUIDE.md`](../demo/DEMO-GUIDE.md)。
-
-## 8. 出站请求与安全
-
-| 出站目标 | 何时 | 内容 |
+| 执行点 | 位置 | 为什么必须在这里 |
 |---|---|---|
-| `api.openai.com` | 每次 LLM 调用（应用本身就有） | 提示词、虚构的银行数据 |
-| `ingest.<realm>.observability.splunkcloud.com`（OTLP） | `OBSERVABILITY_ENABLED=true` | Span 结构、耗时、token、模型名、步骤名；**默认不含正文**（`[omitted: DEMO_TRACE_CONTENT=false]`），工具参数只导出参数名、结果只导出长度 |
-| `app.<realm>.observability.splunkcloud.com/ao/api` | Observe 或 Control 开启时启动一次 | 按名称查找/创建 Project 与 Agent Stream |
-| `app.<realm>.observability.splunkcloud.com/ao/agent-control` | `CONTROL_MODE=remote-api` | 受控步骤的输入/输出（评估必需，Control 不能在没有内容的情况下判断）；会话 ID |
+| 用户消息 PRE / 最终回答 POST | `ChatService`（步骤 `banking-assistant`） | 整轮对话的入口与出口 |
+| 模型调用 PRE / POST | `GovernedChatModel`（只在 `CONTROL_MODE=remote-api` 时包装模型） | 在发给 OpenAI 之前检查输入；在回答交给 Agent 之前检查输出 |
+| Tool PRE / POST | `GovernedToolExecutor`（只在 Control 开启时包装 `@Tool`） | **DENY 必须在 Java 方法运行之前生效**；`afterToolExecution` 是事后通知，挡不住已经发生的写操作 |
+| 确认扣款 PRE（POST 仅审计） | `PaymentController` | 必须在 `PaymentService.confirm` 扣款之前 |
+| 写操作被 POST 拦截后撤回草稿 | `TransferToolSideEffects` | 业务补偿，审计码 `CONTROL_WITHDRAWN` |
 
-- 凭据只来自仓库外的 `~/.config/bank-agent-java/galileo.properties`（0600）或环境变量；日志和 `/api/status` 只显示 `<set>` / `<missing>`。
-- 即使开启 `DEMO_TRACE_CONTENT=true`，导出内容也会经过 `TraceContentPolicy`：遮蔽密钥模式和长数字串，并截断到 2000 字符。
-- 不使用 `recordException`，不导出堆栈；从不打印 HTTP 头（OTel 的 HTTP 日志级别固定为 WARN）。
-- 所有 TLS 校验保持开启；公司 TLS 检查环境使用项目专用 truststore，而不是信任所有证书。
+`StepGovernance` 决定是否插入这些包装：**Control 关闭时返回原模型，并让 AiServices 走 LangChain4j 默认的 `.tools(bean)` 路径**——Observe-only 完全不经过 Control 代码（`ObserveOnlySpanIT` 验证）。包装器本身**不创建 Span**：`GovernedChatModel.listeners()` 返回原模型的监听器，LangChain4j 因此在整个受控步骤外层触发一次 LLM Span，PRE/POST 检查发生在这个 Span 之内；Tool 的 PRE/POST 同样发生在 `beforeToolExecution` 已开启的 Tool Span 之内。STEER 重试在同一个 LLM Span 内完成，Span 记录所有轮次的 token 之和和 `bank.control.steer_retries`。
+
+`ControlledStepRunner`（远端结果 → 统一 Verdict + 失败模式）、`StepCatalog`（可控制的步骤及读/写类型）、`RemoteAgentControlGateway`（REST 契约、Runtime Token、规则缓存）都是本项目代码，详见 [`AGENT-CONTROL.md`](AGENT-CONTROL.md)。
+
+## 4. 第三层：Control 结果上报
+
+- **为什么需要**：评估接口只返回决策，不会在 AO 中留下记录；Console 的 Controls 标签读取的是 control span。
+- **谁来做**：`ControlEventReporter`【本项目】用 OTel 公共 API 为每个评估结果创建一个 Span（`galileo.span.kind=control`、`agent_control.*`，与官方 Python SDK 相同的属性），父节点是当前正在被检查的步骤（LLM / Tool / 根 / 确认）。
+- **谁来发**：同一个 OTel Java Agent【OTel 官方】、同一条 OTLP 通道。**没有第二个导出器，也没有专用的 Control 上报 HTTP 接口。**
+- **Observe 关闭时**：没有 Java Agent，control span 无法导出；决策照常执行并显示在 UI 执行详情中，`/api/status` 的 `control.eventChannel` 明确显示 `EVENT_INGEST_UNAVAILABLE`。
+
+## 5. 谁做了什么
+
+| 功能 | 提供方 |
+|---|---|
+| HTTP 请求 Span、上下文传播、SDK、批量导出、OTLP/HTTP 发送、Resource | **OTel 官方**（Java Agent 2.33.1） |
+| 模型 / AI Service / Tool 的事件 | **LangChain4j 官方**（1.23.0） |
+| HTTP 客户端（OpenAI、Agent Control、AO REST）、TLS | **JDK**（`java.net.http.HttpClient`；项目专用 truststore 只对本进程生效，OTLP 导出也使用它） |
+| 规则存储、评估、Controls 标签展示、Session 生成 | **Splunk AO 平台** |
+| 事件 → GenAI Span 适配（`LangChain4jOtelBridge`）、2 处根/确认 Span、内容过滤（`TraceContentPolicy`）、配置推导（`AoEndpointResolver`）、Control Adapter（`GovernedChatModel`、`GovernedToolExecutor`、`ControlledStepRunner`、`StepCatalog`、`RemoteAgentControlGateway`）、control span（`ControlEventReporter`） | **本项目工程师开发**——不是 Splunk / Galileo 官方 Java API |
+
+## 6. 最终剩下的手工修改点
+
+| 文件 | 改了什么 | 为什么不能自动 |
+|---|---|---|
+| `llm/LlmConfig.java` | 模型上多注册 1 个监听器 | 注册是使用框架扩展点的唯一方式 |
+| `agent/AgentConfig.java` | AI Service 构建时注册监听器与 Tool 钩子；Control 开关决定是否包装 | 同上；集中一处，三个 Agent 共用 |
+| `agent/LlmIntentRouter.java` | 模型经 `StepGovernance.chatModel(…)` 获取（Control 关闭时原样返回） | 路由步骤 `supervisor-router` 的 Control |
+| `conversation/ChatService.java` | 根 Span（约 9 行）；`banking-assistant` PRE/POST 与 STEER 改写 | 见 2.3、3.2 |
+| `api/PaymentController.java` | 确认 Span（约 10 行）；扣款前 PRE、扣款后审计 | 见 2.3、3.2 |
+| `tool/TransferToolSideEffects.java` | 写 Tool 输出被拦截后撤回草稿 | 业务补偿，只属于 Control |
+| `api/StatusController.java`、`api/UiController.java`、`templates/index.html` | 显示 Observe（Java Agent 是否生效）/ Control 状态 | 演示用的状态展示 |
+
+`@Tool` 方法、`AccountService` / `TransactionService` / `PaymentService` 的业务逻辑、Repository、数据库 Schema：**没有为 Observe 做任何修改**。（`PaymentService` 中为 Control 新增的三个方法——查本会话草稿、撤回草稿、记录被拒的确认——以及 `ErrorCode` 中的 Control 错误码，是第一版插桩为 Control 加入的，本次未改动。）
+
+## 7. 本地验证（不联网）
+
+```bash
+scripts/test.sh     # ./mvnw -B clean verify：119 个测试
+```
+
+| 测试 | 验证什么 |
+|---|---|
+| `ObserveOnlySpanIT` | Control 关闭：原模型、默认 Tool 路径，仍得到完整的 Agent → LLM → Tool 树，没有任何 Control 数据 |
+| `OtelSpanStructureIT` | Observe + Control：父子关系、真实 token、会话 ID、默认不导出正文、Control Span 挂在 LLM / Tool / 根 / 确认步骤下、STEER 重试 token 求和、Context 不泄漏 |
+| **`OtelJavaAgentIT`** | **独立 JVM 加载真实 `-javaagent`**，用本地 OTLP 接收器验证四种开关组合：端点 `/v2/trace/otlp`、`X-SF-Token` / `project` / `logstream` 请求头、Resource、完整的 http → agent → llm/tool 树、无重复 Span、无启动噪声 Trace、无密钥/正文/堆栈；Observe 关闭时零导出；以及 jar 版本与 SHA-256 和启动脚本一致。导出的 Span 树写在 `target/otel-javaagent-it/` |
+| `OtelAgentEnvironmentTest` | `galileo.properties` → 标准 `OTEL_*` 变量的推导与编码 |
+| `ControlledToolFlowIT`、`ControlGatewayTest`、`ControlDisabledRegressionIT` | Control 的拦截、撤回、确认防护、失败模式；两个开关都关闭时与未插桩一致 |
+
+## 8. 在真实 AO 中查看
+
+```bash
+scripts/run.sh --background --observe            # 或 --observe --control
+scripts/galileo-smoke.sh --yes                   # 真实 OpenAI，产生少量费用；结束后从 AO API 回读 Span 树
+scripts/galileo-smoke.sh --trace <traceId>       # 只读回读任意 Trace
+```
+
+- Console：Project `bank-agent-java` → Agent Stream `bank-java-demo` → **Tracing**；Trace 名称是根 HTTP Span 的名称（如 `POST /api/chat`），入库延迟 30–90 秒。
+- UI 右侧“执行详情”中的 `OTel trace_id` = Console 中的 External Id；`AO Trace ID` 是 Console URL 中的 UUID。
+- `/api/status` 的 `observability.otelJavaAgentActive` 为 `true` 才表示 Java Agent 真正生效。
+
+## 附录：改造前的方案为什么被替换
+
+2026-11-02 的第一版实现由应用自己构建 OTel SDK 与 OTLP 导出器（`OtelConfiguration` / `BankTelemetry`），并在 7 个业务/框架类中手写 Span（根、Supervisor、三个领域 Agent 的网关、模型装饰器、Tool 装饰器、确认/取消），模型和 `@Tool` 即使只开 Observe 也要经过 Control 装饰器。它在功能上是正确的（见 [`VALIDATION.md`](VALIDATION.md) 历史基线），但对客户而言要照着写的代码太多，也掩盖了“OTel 官方 Java Agent + 框架扩展点”这条标准路径。本次重构删除了自建 SDK、`AgentSpanRunner`、`DraftTraceRegistry` 和装饰器中的全部 Span 代码；改造前后的对比见 [`ARCHITECTURE.md`](ARCHITECTURE.md) 第 8 节。

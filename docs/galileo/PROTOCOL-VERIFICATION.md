@@ -1,5 +1,7 @@
 # Galileo 插桩的协议验证（Protocol Verification）
 
+> 第 1–8 节是 **2026-11-02 的历史验证记录**（当时的实现由应用自建 OTel SDK 发送），结论保持原样、未作修改。2026-11-09 插桩重构为“OTel 官方 Java Agent + LangChain4j 监听”之后的复核见**第 9 节**。
+
 在写 Java 插桩代码之前，先用最小的 Java 探针确认 Splunk AO 的 OTLP 导入、Project/Agent Stream 接口和 Agent Control 接口在真实 SaaS 上怎样工作，避免按猜测实现。本文记录这些验证的方法和结论。
 
 > 执行日期：2026-11-02。后端：Splunk AO SaaS（Splunk Observability Cloud，realm `au0`），Agent Control 服务版本 8.15.0。所有请求都由本机的 Java 探针或 Java 应用发出（`tools/protocol-probes/`）；请求与响应示例均已脱敏，不含 Token。Galileo 两种后端（选项 B/C）**未做协议验证**。
@@ -153,3 +155,27 @@ tools/protocol-probes/run-probe.sh ErrorSpanProbe  # 各种错误表示与 contr
 ```
 
 脚本只在自身进程中从私有文件读取 `AO_REALM` / `AO_O11Y_TOKEN`，从不打印。探针发送的都是合成的、不含敏感信息的数据。
+
+## 9. 2026-11-09 重构后复核
+
+> 执行日期：2026-11-09。后端：Splunk AO SaaS（realm `au0`），Agent Control 服务版本 8.15.0。发送方变为 **OTel 官方 Java Agent 2.33.1**（应用不再含 SDK）；Control REST 客户端未修改。全部请求由本机应用发出，Token 只在进程内使用；本节只记录协议层面的事实，业务场景结果见 [`VALIDATION.md`](VALIDATION.md)。
+
+| 检查项 | 方法 | 结果 |
+|---|---|---|
+| **R1** Agent 的 OTLP 请求 | 黑盒测试 `OtelJavaAgentIT`：真实 `-javaagent` + 本地 OTLP 接收器，用与 `run.sh` 相同的 `OTEL_*` 推导 | **PASS**：`POST /v2/trace/otlp`、`Content-Type: application/x-protobuf`、`X-SF-Token`、`project`、`logstream` 请求头；Resource 含 `service.name`、`splunk_ao.project.name`、`splunk_ao.logstream.name`；只有一个导出方 |
+| **R2** 真实 AO 入库与路由 | `run.sh --observe` + `galileo-smoke.sh --yes`，AO REST 回读 | **PASS**：3 条 Trace 进入 Project `bank-agent-java` / Agent Stream `bank-java-demo`；公司 TLS 检查环境下，Agent 的 OTLP 导出使用项目专用 truststore（JVM 参数）正常 |
+| **R3** 自动 HTTP Span 的解析 | AO 回读 | **PASS**：Java Agent 的 Tomcat SERVER Span 被解析为 `type=http`，Input = `POST /api/chat`，Output = HTTP 状态码 `200`；Trace 记录的名称、Input、Output 取自这个根节点；其下的 `invoke_agent` / `chat` / `execute_tool` 仍分别解析为 agent / llm / tool，token 与 cost 正常 |
+| **R4** 只含 HTTP Span 的 Trace | 用 W3C `traceparent` 指定已知 trace ID 访问 `/api/status`、`/`、`/actuator/health`，再按 ID 查询 | 三条都在 >20 分钟后返回 **404 `no traces matched the provided ID`**（同时段的 GenAI Trace 均已入库）。即：没有 GenAI Span 的 Trace 未出现在该 Project 中；这是观察到的行为，AO 是否有意过滤未经官方确认（问题 Q7） |
+| **R5** 自动 JDBC Span 的解析（可选开启） | `OTEL_INSTRUMENTATION_JDBC_ENABLED=true`（数据目录放在 `/tmp`，避免用户名进入路径），AO 回读 | SQL Span 挂在 `execute_tool` 下，解析为 **`type=workflow`**；metadata 含 `db.query.text`（参数为 `?`）、`db.namespace`、`db.connection_string`（含 H2 文件路径）。因此默认关闭 JDBC |
+| **R6** Session | 同一会话两轮聊天 + UI 确认（独立 Trace） | **PASS**：三条 Trace 同一 Session；Session 仍由 `gen_ai.conversation.id` 决定（根节点是 HTTP Span 不影响） |
+| **R7** Span link | 检查 AO Trace 与 Span 记录返回的全部字段 | AO 记录中**没有** link 相关字段；旧实现中确认 → 草稿创建的 OTel link 在 AO 中无处呈现，重构后删除 |
+| **R8** control span | `--observe --control` 下 6 条演示规则的真实场景，AO 回读 | **PASS**：每个评估结果一个 `type=control` 记录，`control_id`、`check_stage`、`action`、`matched` 正确，父节点分别是被检查的 `tool`、根 `agent`（`banking-assistant`）、`tool payment.confirm`；STEER 场景依次为 control（matched）→ 改写用的 `llm` → control（未 matched） |
+| **R9** Agent Control REST | 启动注册、Runtime Token、评估、规则绑定 PATCH 停用/恢复 | **PASS**：与第 4 节一致；规则绑定变更约 10 秒内生效，应用未重启；评估请求的 `X-Trace-Id` 与当前 Tool Span 的 trace ID 一致（黑盒测试断言） |
+| **R10** 内容显示（K1） | AO 回读 Input / Output | 本次多数 Trace 的 agent / llm / tool 占位符正常显示；同一 Session 中较晚的确认 Trace 的 `payment.confirm` Input 为空，与历史问题 K1 现象一致，根因仍未确定 |
+
+**尚未验证**：Console 界面截图（本次只用 AO REST API 回读，未登录 Console 截图）；绑定在领域 Agent 模型步骤（`*-agent`）上的规则（演示规则中没有，离线测试覆盖了 LLM Span 下的 control span）；Galileo 两种后端。
+
+新增的技术问题：
+
+7. **Q7**：只包含非 GenAI Span（如 HTTP 健康检查）的 Trace 不出现在 Agent Stream 中，这是 AO ingest 的设计行为吗？是否有官方说明（例如按 `gen_ai.operation.name` 过滤）？
+8. **Q8**：OTel Java Agent 的 HTTP SERVER Span 被解析为 `type=http` 并作为 Trace 根节点（Trace 名称为 `POST /api/chat`）。官方是否建议把 Agent 根 Span 放在 HTTP Span 之下，还是建议 Trace 根就是 Agent Span？

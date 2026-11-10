@@ -1,14 +1,15 @@
 package com.demo.bankagent.support;
 
-import com.demo.bankagent.llm.TraceChatModelListener;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.ModelProvider;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.listener.ChatModelListener;
 import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.request.ChatRequestParameters;
 import dev.langchain4j.model.chat.request.ResponseFormatType;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.output.FinishReason;
@@ -33,6 +34,11 @@ public class ScriptedChatModel implements ChatModel {
     private final Deque<Function<ChatRequest, AiMessage>> routerReplies = new ConcurrentLinkedDeque<>();
     private final Deque<Function<ChatRequest, AiMessage>> agentReplies = new ConcurrentLinkedDeque<>();
     private final List<ChatRequest> requests = new CopyOnWriteArrayList<>();
+    private final List<ChatModelListener> listeners;
+
+    public ScriptedChatModel(List<ChatModelListener> listeners) {
+        this.listeners = List.copyOf(listeners);
+    }
 
     public void reset() {
         routerReplies.clear();
@@ -118,6 +124,17 @@ public class ScriptedChatModel implements ChatModel {
 
     @Override
     public List<ChatModelListener> listeners() {
-        return List.of(new TraceChatModelListener());
+        return listeners;
+    }
+
+    /** Behaves like the OpenAI model for the instrumentation (provider and default model name). */
+    @Override
+    public ModelProvider provider() {
+        return ModelProvider.OPEN_AI;
+    }
+
+    @Override
+    public ChatRequestParameters defaultRequestParameters() {
+        return ChatRequestParameters.builder().modelName(MODEL_NAME).build();
     }
 }

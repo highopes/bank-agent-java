@@ -21,8 +21,8 @@
     <span class="badge badge-model" th:text="'模型: ' + ${model}">模型: gpt-5-nano</span>
     <span class="badge" th:classappend="${llmConfigured} ? 'badge-ok' : 'badge-warn'"
           th:text="${llmConfigured} ? 'OpenAI 已配置' : 'OpenAI 未配置'">OpenAI</span>
-    <span class="badge" th:classappend="${observabilityEnabled} ? 'badge-ok' : ''"
-          th:text="${observabilityEnabled} ? 'Observe: OTel 开' : 'Observe: 关'">Observe</span>
+    <span class="badge" th:classappend="${otelAgentActive} ? 'badge-ok' : (${observabilityEnabled} ? 'badge-warn' : '')"
+          th:text="${otelAgentActive} ? 'Observe: OTel Java Agent' : (${observabilityEnabled} ? 'Observe: 未生效（未挂载 Java Agent）' : 'Observe: 关')">Observe</span>
     <span class="badge" th:classappend="${controlMode == 'remote-api'} ? 'badge-ok' : ''"
           th:text="'Agent Control: ' + ${controlMode}">Agent Control</span>
     <span class="badge badge-warn" th:if="${demoTraceContent}">演示内容会发送到 AO（仅虚构数据）</span>

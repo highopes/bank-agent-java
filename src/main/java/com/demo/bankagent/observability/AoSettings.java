@@ -3,8 +3,12 @@ package com.demo.bankagent.observability;
 import com.demo.bankagent.control.ControlFailureMode;
 import com.demo.bankagent.control.ControlMode;
 import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Final, derived observability and Agent Control settings. Built only by {@link AoEndpointResolver}; business
@@ -109,6 +113,28 @@ public record AoSettings(
         return profile == AoBackendProfile.O11Y ? "splunk_ao.logstream.name" : "galileo.logstream.name";
     }
 
+    /**
+     * The standard OpenTelemetry Java agent settings for this backend (environment variable names). Values are
+     * URL-encoded as the OTel specification requires for headers and resource attributes. The headers value
+     * contains the OTLP credential: never print it (scripts/run.sh only exports it into the application JVM).
+     */
+    public Map<String, String> otelAgentEnvironment() {
+        String project = encode(projectName.value());
+        String stream = encode(agentStream.value());
+        Map<String, String> env = new LinkedHashMap<>();
+        env.put("OTEL_SERVICE_NAME", serviceName.value());
+        env.put("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", otlpEndpoint.value());
+        env.put("OTEL_EXPORTER_OTLP_TRACES_HEADERS", otlpAuthHeader.value() + "=" + encode(otlpAuthValue.value())
+                + ",project=" + project + ",logstream=" + stream);
+        env.put("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment.name=local-demo,"
+                + projectRoutingAttribute() + "=" + project + "," + streamRoutingAttribute() + "=" + stream);
+        return env;
+    }
+
+    private static String encode(String value) {
+        return value == null ? "" : URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
     /** Human-readable, secret-free description for the startup log and the preflight script. */
     public List<String> describe() {
         List<String> lines = new ArrayList<>();
@@ -123,6 +149,10 @@ public record AoSettings(
         lines.add("AO_OTLP_AUTH_HEADER=" + otlpAuthHeader + ", credential=" + otlpAuthValue);
         lines.add("OTEL_SERVICE_NAME=" + serviceName);
         lines.add("AO_PROJECT_NAME=" + projectName + ", AO_AGENT_STREAM=" + agentStream);
+        lines.add("OpenTelemetry Java agent (Observe): OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=" + otlpEndpoint.value()
+                + ", OTEL_EXPORTER_OTLP_TRACES_HEADERS=" + otlpAuthHeader.value() + "=" + (otlpAuthValue.isSet()
+                ? "<set>" : "<missing>") + ",project=" + projectName.value() + ",logstream=" + agentStream.value()
+                + ", resource " + projectRoutingAttribute() + " / " + streamRoutingAttribute());
         lines.add("AGENT_CONTROL_URL=" + agentControlUrl);
         lines.add("AGENT_CONTROL_EVALUATION_PATH=" + agentControlEvaluationPath);
         lines.add("AGENT_CONTROL_API_KEY_HEADER=" + agentControlApiKeyHeader + ", credential=" + agentControlApiKey);

@@ -46,9 +46,9 @@ public class LlmIntentRouter implements IntentRouter {
 
     public LlmIntentRouter(ChatModel chatModel, AgentPrompts prompts, BankAgentProperties properties,
                            ObjectMapper objectMapper, StepGovernance governance) {
-        // Instrumentation: the router's model calls get the LLM span + Control of step "supervisor-router". This is the
-        // only LLM span for the call: no second span is created here.
-        this.chatModel = governance.governChatModel(chatModel, StepCatalog.SUPERVISOR_ROUTER);
+        // Agent Control step "supervisor-router" (CONTROL_MODE=off: the original model). The LLM span comes from the
+        // model's LangChain4j listener; nothing here creates spans.
+        this.chatModel = governance.chatModel(chatModel, StepCatalog.SUPERVISOR_ROUTER);
         this.prompts = prompts;
         this.properties = properties;
         this.objectMapper = objectMapper;

@@ -43,9 +43,9 @@ public class ControlConfiguration {
                     + "See docs/galileo/AGENT-CONTROL.md.");
         }
         if (!settings.observabilityEnabled()) {
-            log.warn("Agent Control is on but OBSERVABILITY_ENABLED=false: decisions are enforced, but no control "
-                    + "spans can be exported, so the Console Controls tab stays empty ({}).",
-                    ControlEventReporter.EVENT_INGEST_UNAVAILABLE);
+            log.warn("Agent Control is on but Observe is off: decisions are enforced and shown in the UI, but no "
+                    + "control spans can be exported (no OpenTelemetry Java agent), so the Console Controls tab "
+                    + "stays empty ({}).", ControlEventReporter.EVENT_INGEST_UNAVAILABLE);
         }
         return gateway;
     }

@@ -1,6 +1,5 @@
 package com.demo.bankagent.support;
 
-import com.demo.bankagent.observability.DraftTraceRegistry;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,8 +9,9 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 
 /**
- * Integration tests of the Galileo instrumentation (Observe + Control): the real application context with spans recorded in memory and
- * a scripted Control gateway. CONTROL_MODE / OBSERVABILITY_ENABLED stay off, so no backend is ever contacted.
+ * Integration tests of the Galileo instrumentation with Observe and Control both on: the real application context,
+ * spans recorded in memory (in place of the OpenTelemetry Java agent) and a scripted Control gateway, so the
+ * PRE/POST enforcement adapters are active. No backend is ever contacted.
  */
 @Import({TestSupportConfig.class, InMemoryTelemetryConfig.class, GovernanceTestBase.ScriptedControlConfig.class})
 public abstract class GovernanceTestBase extends IntegrationTestBase {
@@ -22,14 +22,10 @@ public abstract class GovernanceTestBase extends IntegrationTestBase {
     @Autowired
     protected ScriptedControlGateway control;
 
-    @Autowired
-    protected DraftTraceRegistry draftTraces;
-
     @BeforeEach
     void resetGovernance() {
         spans.reset();
         control.reset();
-        draftTraces.clear();
     }
 
     @TestConfiguration(proxyBeanMethods = false)

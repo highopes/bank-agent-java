@@ -1,6 +1,7 @@
 package com.demo.bankagent.llm;
 
 import com.demo.bankagent.config.BankAgentProperties;
+import com.demo.bankagent.observability.LangChain4jOtelBridge;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import java.util.List;
@@ -12,6 +13,9 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Builds the single ChatModel shared by the Supervisor and the domain agents. Only OpenAI is
  * contacted. No temperature is sent because GPT-5 family reasoning models reject custom values.
+ *
+ * <p>Two LangChain4j ChatModelListeners are registered: the UI execution trace and {@link LangChain4jOtelBridge}
+ * (one GenAI "chat" span per model call, with the provider's token usage; a no-op without the OTel Java agent).
  */
 @Configuration
 public class LlmConfig {
@@ -19,7 +23,7 @@ public class LlmConfig {
     private static final Logger log = LoggerFactory.getLogger(LlmConfig.class);
 
     @Bean
-    public ChatModel chatModel(BankAgentProperties properties) {
+    public ChatModel chatModel(BankAgentProperties properties, LangChain4jOtelBridge otel) {
         BankAgentProperties.OpenAi openai = properties.openai();
         if (!openai.isConfigured()) {
             log.warn("OPENAI_API_KEY is not configured. The UI will start, but chat requests will return "
@@ -36,7 +40,7 @@ public class LlmConfig {
                 .store(false)
                 .logRequests(openai.logRequests())
                 .logResponses(openai.logResponses())
-                .listeners(List.of(new TraceChatModelListener()));
+                .listeners(List.of(new TraceChatModelListener(), otel));
         if (openai.baseUrl() != null && !openai.baseUrl().isBlank()) {
             builder.baseUrl(openai.baseUrl());
         }

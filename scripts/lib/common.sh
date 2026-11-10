@@ -137,6 +137,72 @@ run_galileo_cli() {
     org.springframework.boot.loader.launch.PropertiesLauncher "$@"
 }
 
+# --- Observe: official OpenTelemetry Java agent ---------------------------------------------------
+# Observe = attach the official agent with -javaagent to THIS application's JVM only (never JAVA_TOOL_OPTIONS, never
+# the JDK). Version and SHA-256 are pinned (Maven Central); keep OTEL_JAVAAGENT_VERSION equal to
+# <otel.javaagent.version> in pom.xml (checked by OtelJavaAgentIT). The jar is cached outside the repository.
+OTEL_JAVAAGENT_VERSION="2.33.1"
+OTEL_JAVAAGENT_SHA256="e43a270df53c6f423e0ab157be9c27ccc01d5dc3232e162fe54777573db2f149"
+BANK_AGENT_OTEL_CONFIG="$BANK_AGENT_ROOT/config/otel-javaagent.properties"
+OTEL_AGENT_CACHE_JAR="$BANK_AGENT_DATA_DIR/otel/opentelemetry-javaagent-$OTEL_JAVAAGENT_VERSION.jar"
+
+sha256_of() {
+  shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
+}
+
+# Sets OTEL_AGENT_JAR to a checksum-verified agent jar. BANK_AGENT_OTEL_AGENT_JAR=<path> uses an existing (e.g.
+# offline) copy, which must match the pinned SHA-256. Otherwise the jar is fetched once with the Maven Wrapper (same
+# Maven Central / mirror settings as the build). Any failure stops the start: Observe never silently degrades.
+ensure_otel_agent() {
+  local jar="${BANK_AGENT_OTEL_AGENT_JAR:-$OTEL_AGENT_CACHE_JAR}" actual
+  if [ ! -s "$jar" ]; then
+    [ -z "${BANK_AGENT_OTEL_AGENT_JAR:-}" ] || die "BANK_AGENT_OTEL_AGENT_JAR points to a missing file: $jar"
+    info "Downloading the OpenTelemetry Java agent $OTEL_JAVAAGENT_VERSION once into $(dirname "$jar") ..."
+    mkdir -p "$(dirname "$jar")"
+    (cd "$BANK_AGENT_ROOT" && ./mvnw -B -q dependency:copy \
+        -Dartifact="io.opentelemetry.javaagent:opentelemetry-javaagent:$OTEL_JAVAAGENT_VERSION" \
+        -DoutputDirectory="$(dirname "$jar")") >/dev/null 2>&1 \
+      || die "Could not download io.opentelemetry.javaagent:opentelemetry-javaagent:$OTEL_JAVAAGENT_VERSION (network / Maven Central?). Observe was NOT started. Offline: copy opentelemetry-javaagent-$OTEL_JAVAAGENT_VERSION.jar to this machine and set BANK_AGENT_OTEL_AGENT_JAR=<path>, or start without --observe."
+  fi
+  actual="$(sha256_of "$jar")"
+  [ "$actual" = "$OTEL_JAVAAGENT_SHA256" ] \
+    || die "OpenTelemetry Java agent checksum mismatch: $jar (expected SHA-256 $OTEL_JAVAAGENT_SHA256, got ${actual:-none}). Delete the file to download it again."
+  OTEL_AGENT_JAR="$jar"
+}
+
+# Prepares Observe for the application JVM: OTEL_JVM_OPTS (-javaagent + the non-secret settings file
+# config/otel-javaagent.properties) and the AO-specific standard variables (OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+# OTEL_EXPORTER_OTLP_TRACES_HEADERS, OTEL_RESOURCE_ATTRIBUTES, OTEL_SERVICE_NAME), derived from galileo.properties by
+# GalileoCli with the application's own rules. They are exported into this script process only (inherited by the
+# JVM) and never printed; the headers value holds the OTLP credential. Requires ensure_jar and prepare_truststore.
+otel_agent_setup() {
+  local env_lines line key own=" "
+  ensure_otel_agent
+  env_lines="$(run_galileo_cli otel-env)" \
+    || die "Observe is on, but the Galileo settings are incomplete (see above). Fix $BANK_AGENT_GALILEO_FILE or start without --observe."
+  while [ -n "$env_lines" ]; do
+    line="${env_lines%%$'\n'*}"
+    if [ "$line" = "$env_lines" ]; then env_lines=""; else env_lines="${env_lines#*$'\n'}"; fi
+    case "$line" in
+      OTEL_*=*) key="${line%%=*}"; export "$line"; own="$own$key " ;;
+    esac
+  done
+  for key in $(env | awk -F= '/^OTEL_[A-Z0-9_]*=/ {print $1}'); do
+    case "$own" in
+      *" $key "*) ;;
+      *) warn "Inherited $key from your shell overrides config/otel-javaagent.properties for this run." ;;
+    esac
+  done
+  OTEL_JVM_OPTS=("-javaagent:$OTEL_AGENT_JAR" "-Dotel.javaagent.configuration-file=$BANK_AGENT_OTEL_CONFIG")
+}
+
+# Warns when a global JAVA_TOOL_OPTIONS would attach an agent to every JVM (this project never sets it).
+check_java_tool_options() {
+  case "${JAVA_TOOL_OPTIONS:-}" in
+    *javaagent*) warn "JAVA_TOOL_OPTIONS contains -javaagent; it applies to every JVM, including this one. Unset it for a clean Observe on/off comparison." ;;
+  esac
+}
+
 # --- TLS trust -----------------------------------------------------------------------------
 # Corporate networks (e.g. Cisco Secure Access) may re-sign TLS traffic with a root CA that is
 # trusted by the macOS keychain but not by the JDK's bundled cacerts. To reach OpenAI from Java we

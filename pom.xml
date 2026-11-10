@@ -16,13 +16,16 @@
     <artifactId>bank-agent-java</artifactId>
     <version>0.2.0-SNAPSHOT</version>
     <name>bank-agent-java</name>
-    <description>Banking AI Agent (Java) - local demo (simulated banking only) with Galileo instrumentation (OpenTelemetry Observe and Agent Control)</description>
+    <description>Banking AI Agent (Java) - local demo (simulated banking only) with Galileo instrumentation: Observe via the OpenTelemetry Java agent + LangChain4j listeners, Agent Control at business gates</description>
 
     <properties>
         <java.version>21</java.version>
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <langchain4j.version>1.23.0</langchain4j.version>
+        <!-- Official OpenTelemetry Java agent that scripts/run.sh attaches in Observe mode. Keep in sync with
+             OTEL_JAVAAGENT_VERSION / OTEL_JAVAAGENT_SHA256 in scripts/lib/common.sh (checked by OtelJavaAgentIT). -->
+        <otel.javaagent.version>2.33.1</otel.javaagent.version>
     </properties>
 
     <dependencyManagement>
@@ -76,32 +79,13 @@
         </dependency>
 
         <!--
-            Galileo Observe: official OpenTelemetry Java API/SDK + OTLP/HTTP exporter. The version (1.49.0)
-            is managed by the Spring Boot 3.5.16 BOM, so no override is needed. The JDK HttpClient sender
-            replaces the default OkHttp sender: no OkHttp/Kotlin jars, and the JVM trust store prepared by
-            scripts/run.sh applies to OTLP export exactly as it does to OpenAI calls.
+            Galileo Observe: only the OpenTelemetry API (version managed by the Spring Boot BOM). The SDK, the
+            OTLP exporter, sampling and batching come from the official OpenTelemetry Java agent, which
+            scripts/run.sh attaches with -javaagent only when Observe is on. Without the agent the API is a no-op.
         -->
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.opentelemetry</groupId>
-            <artifactId>opentelemetry-sdk</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.opentelemetry</groupId>
-            <artifactId>opentelemetry-exporter-otlp</artifactId>
-            <exclusions>
-                <exclusion>
-                    <groupId>io.opentelemetry</groupId>
-                    <artifactId>opentelemetry-exporter-sender-okhttp</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        <dependency>
-            <groupId>io.opentelemetry</groupId>
-            <artifactId>opentelemetry-exporter-sender-jdk</artifactId>
         </dependency>
 
         <dependency>
@@ -109,9 +93,17 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- In-process span assertions (in-memory exporter). -->
         <dependency>
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-sdk-testing</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- OtelJavaAgentIT: decodes the OTLP/protobuf requests the real Java agent sends to a loopback receiver. -->
+        <dependency>
+            <groupId>io.opentelemetry.proto</groupId>
+            <artifactId>opentelemetry-proto</artifactId>
+            <version>1.8.0-alpha</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -161,7 +153,33 @@
                 </configuration>
             </plugin>
             <plugin>
-                <!-- Runs *IT integration tests (Spring context + in-memory H2 + scripted model) during verify. -->
+                <!-- The black-box test OtelJavaAgentIT starts the packaged application with this exact agent jar. -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-otel-javaagent</id>
+                        <phase>pre-integration-test</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>io.opentelemetry.javaagent</groupId>
+                                    <artifactId>opentelemetry-javaagent</artifactId>
+                                    <version>${otel.javaagent.version}</version>
+                                    <destFileName>opentelemetry-javaagent.jar</destFileName>
+                                </artifactItem>
+                            </artifactItems>
+                            <outputDirectory>${project.build.directory}/otel-javaagent</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <!-- Runs *IT integration tests (Spring context + in-memory H2 + scripted model, and the black-box
+                     OtelJavaAgentIT that launches the packaged jar with the real -javaagent) during verify. -->
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <executions>
@@ -195,9 +213,45 @@
                         <BANK_AGENT_SECRETS_FILE>/nonexistent/bank-agent-test-secrets.properties</BANK_AGENT_SECRETS_FILE>
                         <BANK_AGENT_GALILEO_FILE>/nonexistent/bank-agent-test-galileo.properties</BANK_AGENT_GALILEO_FILE>
                         <OPENAI_API_KEY></OPENAI_API_KEY>
+                        <bank.it.appJar>${project.build.directory}/${project.build.finalName}.jar</bank.it.appJar>
+                        <bank.it.otelAgentJar>${project.build.directory}/otel-javaagent/opentelemetry-javaagent.jar</bank.it.otelAgentJar>
+                        <bank.it.otelAgentVersion>${otel.javaagent.version}</bank.it.otelAgentVersion>
+                        <bank.it.projectDir>${project.basedir}</bank.it.projectDir>
+                        <bank.it.reportDir>${project.build.directory}/otel-javaagent-it</bank.it.reportDir>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+            Only for tools/protocol-probes/run-probe.sh (local protocol verification of 2026-11-02): the probes build their
+            own OTel SDK + OTLP exporter on purpose. The application itself never ships an SDK - Observe uses the
+            OpenTelemetry Java agent.
+        -->
+        <profile>
+            <id>protocol-probes</id>
+            <dependencies>
+                <dependency>
+                    <groupId>io.opentelemetry</groupId>
+                    <artifactId>opentelemetry-sdk</artifactId>
+                </dependency>
+                <dependency>
+                    <groupId>io.opentelemetry</groupId>
+                    <artifactId>opentelemetry-exporter-otlp</artifactId>
+                    <exclusions>
+                        <exclusion>
+                            <groupId>io.opentelemetry</groupId>
+                            <artifactId>opentelemetry-exporter-sender-okhttp</artifactId>
+                        </exclusion>
+                    </exclusions>
+                </dependency>
+                <dependency>
+                    <groupId>io.opentelemetry</groupId>
+                    <artifactId>opentelemetry-exporter-sender-jdk</artifactId>
+                </dependency>
+            </dependencies>
+        </profile>
+    </profiles>
 </project>

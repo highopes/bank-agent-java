@@ -9,6 +9,8 @@
 application-local.*
 config/*.properties
 !config/*.example.properties
+# Non-secret, standard settings of the OpenTelemetry Java agent (part of the demo).
+!config/otel-javaagent.properties
 
 # Build output
 target/

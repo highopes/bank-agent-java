@@ -5,7 +5,8 @@ import com.demo.bankagent.control.ControlGateway;
 import com.demo.bankagent.control.NoOpControlGateway;
 import com.demo.bankagent.conversation.ChatService;
 import com.demo.bankagent.observability.AoTargetHolder;
-import com.demo.bankagent.observability.BankTelemetry;
+import com.demo.bankagent.governance.StepGovernance;
+import com.demo.bankagent.observability.GenAiSpans;
 import com.demo.bankagent.service.AccountService;
 import com.demo.bankagent.service.Views.TransferDraftView;
 import com.demo.bankagent.support.IntegrationTestBase;
@@ -22,9 +23,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * OBSERVABILITY_ENABLED=false and CONTROL_MODE=off (the defaults): the application must behave exactly like
- * the uninstrumented application - no backend lookup, no spans, no Control requests. The application's original
- * test classes (written before the instrumentation) run unchanged in this mode as well.
+ * Observe off (no OpenTelemetry Java agent) and CONTROL_MODE=off (the defaults): the application must behave
+ * exactly like the uninstrumented application - no backend lookup, no spans, no Control requests, and LangChain4j
+ * on its default path (no enforcement adapter). The application's original test classes (written before the
+ * instrumentation) run unchanged in this mode as well.
  */
 class ControlDisabledRegressionIT extends IntegrationTestBase {
 
@@ -32,7 +34,10 @@ class ControlDisabledRegressionIT extends IntegrationTestBase {
     ControlGateway gateway;
 
     @Autowired
-    BankTelemetry telemetry;
+    GenAiSpans spans;
+
+    @Autowired
+    StepGovernance governance;
 
     @Autowired
     AoTargetHolder targets;
@@ -50,7 +55,8 @@ class ControlDisabledRegressionIT extends IntegrationTestBase {
     void switchesOffMeanNoControlNoTelemetryNoLookup() {
         assertThat(gateway).isInstanceOf(NoOpControlGateway.class);
         assertThat(gateway.enabled()).isFalse();
-        assertThat(telemetry.exporting()).isFalse();
+        assertThat(spans.active()).isFalse();
+        assertThat(governance.chatModel(model, "account-agent")).isSameAs(model);
         assertThat(targets.state()).isEqualTo(AoTargetHolder.State.DISABLED);
         assertThat(targets.target()).isEmpty();
     }
@@ -95,6 +101,7 @@ class ControlDisabledRegressionIT extends IntegrationTestBase {
     void statusReportsBothFeaturesOffWithoutSecrets() throws Exception {
         mvc.perform(get("/api/status")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.observability.enabled").value(false))
+                .andExpect(jsonPath("$.observability.otelJavaAgentActive").value(false))
                 .andExpect(jsonPath("$.control.mode").value("off"))
                 .andExpect(jsonPath("$.control.eventChannel").value(
                         org.hamcrest.Matchers.startsWith("EVENT_INGEST_UNAVAILABLE")))

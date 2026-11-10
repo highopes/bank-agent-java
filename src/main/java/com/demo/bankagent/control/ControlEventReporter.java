@@ -1,10 +1,9 @@
 package com.demo.bankagent.control;
 
-import com.demo.bankagent.observability.AgentSpanRunner;
 import com.demo.bankagent.observability.AoBackendProfile;
 import com.demo.bankagent.observability.AoSettings;
-import com.demo.bankagent.observability.BankTelemetry;
 import com.demo.bankagent.observability.GenAiAttributes;
+import com.demo.bankagent.observability.GenAiSpans;
 import com.demo.bankagent.observability.TraceContentPolicy;
 import com.demo.bankagent.trace.ControlDecisionTrace;
 import com.demo.bankagent.trace.ExecutionTrace;
@@ -21,17 +20,18 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Reports what Agent Control actually evaluated. It is a separate component from the gateway because the server's
- * /evaluation endpoint is evaluation-only and records no Control event by itself (agent-control
- * evaluation_events.py rebuilds events client-side).
+ * Reports what Agent Control actually evaluated (UI execution trace, step span metadata, Control spans). It is a
+ * separate component from the gateway because the server's /evaluation endpoint only returns a decision and records
+ * no Control event by itself (agent-control evaluation_events.py rebuilds events client-side).
  *
- * <p>Event channel (protocol verification, docs/galileo/PROTOCOL-VERIFICATION.md): the official Splunk AO Python SDK turns every
+ * <p>Event channel (docs/galileo/PROTOCOL-VERIFICATION.md): the official Splunk AO Python SDK turns every
  * ControlExecutionEvent into a "control span" (splunk_ao handlers/agent_control/bridge.py -&gt; add_control_span)
- * and exports it via OTLP with galileo.span.kind=control and agent_control.* attributes
- * (converter/attribute_mapping.set_control_attributes). This class emits the same span, as a child of the
- * evaluated step's span, for every match / non-match / error returned by the server. Protocol verification showed that AO stores it
- * as a native control span and the Console shows it in the span's Controls tab. Without Observe there is no
- * supported channel; that state is reported as EVENT_INGEST_UNAVAILABLE and nothing is faked.
+ * exported via OTLP with galileo.span.kind=control and agent_control.* attributes
+ * (converter/attribute_mapping.set_control_attributes). This class builds the same span with the OpenTelemetry
+ * API, as a child of the evaluated step's span (the current span), for every match / non-match / error returned
+ * by the server. It is exported by the same OpenTelemetry Java agent as every other span - there is no second
+ * exporter or HTTP channel. Without Observe (no agent) nothing can be exported; that state is reported as
+ * EVENT_INGEST_UNAVAILABLE and nothing is faked. The spans are evidence only: they never change a decision.
  */
 @Component
 public class ControlEventReporter {
@@ -39,15 +39,15 @@ public class ControlEventReporter {
     private static final Logger log = LoggerFactory.getLogger(ControlEventReporter.class);
     public static final String EVENT_INGEST_UNAVAILABLE = "EVENT_INGEST_UNAVAILABLE";
 
-    private final BankTelemetry telemetry;
+    private final GenAiSpans spans;
     private final AoSettings settings;
     private final TraceContentPolicy content;
     private final ObjectMapper mapper;
     private final AtomicBoolean warnedNoChannel = new AtomicBoolean();
 
-    public ControlEventReporter(BankTelemetry telemetry, AoSettings settings, TraceContentPolicy content,
+    public ControlEventReporter(GenAiSpans spans, AoSettings settings, TraceContentPolicy content,
                                 ObjectMapper mapper) {
-        this.telemetry = telemetry;
+        this.spans = spans;
         this.settings = settings;
         this.content = content;
         this.mapper = mapper;
@@ -55,12 +55,14 @@ public class ControlEventReporter {
 
     /** Status text for /api/status and the docs. */
     public String eventChannel() {
-        if (!telemetry.exporting()) {
-            return EVENT_INGEST_UNAVAILABLE + " (OBSERVABILITY_ENABLED=false: control spans cannot be exported)";
+        if (!spans.active()) {
+            return EVENT_INGEST_UNAVAILABLE + " (Observe off - no OpenTelemetry Java agent: control spans cannot be "
+                    + "exported)";
         }
         return settings.profile() == AoBackendProfile.O11Y
-                ? "OTLP control spans (verified for profile o11y)"
-                : "OTLP control spans (same contract; not verified online for profile galileo)";
+                ? "OTLP control spans via the OpenTelemetry Java agent (verified for profile o11y)"
+                : "OTLP control spans via the OpenTelemetry Java agent (same contract; not verified online for "
+                + "profile galileo)";
     }
 
     public void report(ControlStage stage, ControlStep step, ControlDecision decision, String verdict) {
@@ -83,7 +85,7 @@ public class ControlEventReporter {
         if (decision.results().isEmpty()) {
             return;
         }
-        if (!telemetry.exporting()) {
+        if (!spans.active()) {
             if (warnedNoChannel.compareAndSet(false, true)) {
                 log.warn("Agent Control results cannot be shown in the Console Controls tab: {}", eventChannel());
             }
@@ -97,7 +99,7 @@ public class ControlEventReporter {
     private void emitControlSpan(ControlStage stage, ControlStep step, ControlMatchResult r) {
         Instant end = Instant.now();
         long durationNanos = r.executionDurationMs() == null ? 0L : (long) (r.executionDurationMs() * 1_000_000);
-        Span span = telemetry.tracer().spanBuilder(r.controlName())
+        Span span = spans.tracer().spanBuilder(r.controlName())
                 .setParent(Context.current())
                 .setSpanKind(SpanKind.INTERNAL)
                 .setStartTimestamp(end.minusNanos(durationNanos))
@@ -136,7 +138,7 @@ public class ControlEventReporter {
                 "unknown"));
         if (r.errorMessage() != null) {
             span.setAttribute(GenAiAttributes.CONTROL_ERROR_MESSAGE, content.sanitize(r.errorMessage()));
-            AgentSpanRunner.markError(span, "control_evaluation_error", "control evaluation error", 500);
+            GenAiSpans.markError(span, "control_evaluation_error", "control evaluation error");
         }
         span.end(end);
     }

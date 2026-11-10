@@ -10,11 +10,9 @@ import com.demo.bankagent.control.ControlledStepRunner;
 import com.demo.bankagent.control.StepAccess;
 import com.demo.bankagent.control.StepCatalog;
 import com.demo.bankagent.conversation.ConversationService;
-import com.demo.bankagent.observability.AgentSpanRunner;
 import com.demo.bankagent.observability.AoIds;
-import com.demo.bankagent.observability.BankTelemetry;
-import com.demo.bankagent.observability.DraftTraceRegistry;
 import com.demo.bankagent.observability.GenAiAttributes;
+import com.demo.bankagent.observability.GenAiSpans;
 import com.demo.bankagent.observability.TraceContentPolicy;
 import com.demo.bankagent.service.BankingException;
 import com.demo.bankagent.service.ErrorCode;
@@ -25,8 +23,6 @@ import com.demo.bankagent.tool.TransferToolSideEffects;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.opentelemetry.api.trace.Span;
-import io.opentelemetry.api.trace.SpanBuilder;
-import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.context.Scope;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -45,17 +41,22 @@ import org.springframework.web.bind.annotation.RestController;
  * Explicit, user-triggered transfer decisions. These endpoints are called only by the UI buttons;
  * they are not reachable from the LLM tools.
  *
- * <p>Instrumentation: a confirmation is its own trace ("payment.confirm", root span, same AO session via
- * gen_ai.conversation.id, span LINK to the span that created the draft - not a fake child of the old chat turn).
- * Agent Control step "payment.confirm" (write, default fail-closed) is checked BEFORE PaymentService.confirm, so a
- * DENY, a STEER or an unavailable Control service can never cause a debit. The POST check is audit-only: a decision
- * after the debit is recorded, never used to pretend the transfer did not happen.
+ * <p>Observe: the HTTP request span comes from the OpenTelemetry Java agent. The confirmation additionally gets the
+ * second (and last) hand-written span of the application, "execute_tool payment.confirm": the debit is a
+ * business step that LangChain4j does not run (no framework event), it carries gen_ai.conversation.id so AO puts
+ * this separate trace into the same session as the chat that created the draft, and it is the step under which
+ * the Control spans of "payment.confirm" are shown. Cancel has no business span (it is neither an AI step nor
+ * controlled): its trace is just the agent's HTTP span.
+ *
+ * <p>Control: step "payment.confirm" (write, default fail-closed) is checked BEFORE PaymentService.confirm, so a
+ * DENY, a STEER or an unavailable Control service can never cause a debit. The POST check is audit-only: a
+ * decision after the debit is recorded, never used to pretend the transfer did not happen.
  */
 @RestController
 @RequestMapping("/api/payments/drafts")
 public class PaymentController {
 
-    /** Response headers that correlate a confirm/cancel click with its AO trace (only when tracing is on). */
+    /** Response headers that correlate a confirm click with its AO trace (only when Observe is on). */
     public static final String TRACE_ID_HEADER = "X-Bank-Trace-Id";
     public static final String AO_TRACE_ID_HEADER = "X-Bank-AO-Trace-Id";
 
@@ -65,20 +66,17 @@ public class PaymentController {
     private final PaymentService paymentService;
     private final ConversationService conversationService;
     private final ControlledStepRunner control;
-    private final BankTelemetry telemetry;
+    private final GenAiSpans spans;
     private final TraceContentPolicy content;
-    private final DraftTraceRegistry draftTraces;
     private final ObjectMapper mapper;
 
     public PaymentController(PaymentService paymentService, ConversationService conversationService,
-                             ControlledStepRunner control, BankTelemetry telemetry, TraceContentPolicy content,
-                             DraftTraceRegistry draftTraces, ObjectMapper mapper) {
+                             ControlledStepRunner control, GenAiSpans spans, ObjectMapper mapper) {
         this.paymentService = paymentService;
         this.conversationService = conversationService;
         this.control = control;
-        this.telemetry = telemetry;
-        this.content = content;
-        this.draftTraces = draftTraces;
+        this.spans = spans;
+        this.content = spans.content();
         this.mapper = mapper;
     }
 
@@ -86,9 +84,13 @@ public class PaymentController {
     public ConfirmationResult confirm(@PathVariable String draftId,
                                       @Valid @RequestBody ApiRequests.DraftActionRequest request,
                                       HttpServletResponse response) {
-        Span span = businessSpan(StepCatalog.PAYMENT_CONFIRM, "confirm", draftId, request.conversationId());
-        try (Scope ignored = span.makeCurrent()) {
-            traceHeaders(span, response, "confirm");
+        Span span = spans.startTool(StepCatalog.PAYMENT_CONFIRM, request.conversationId(),
+                content.toolArguments(mapper.createObjectNode().put("draftId", draftId == null ? "" : draftId)));
+        if (draftId != null && DRAFT_ID.matcher(draftId).matches()) {
+            span.setAttribute(GenAiAttributes.BANK_DRAFT_REF, TransferToolSideEffects.draftRef(draftId));
+        }
+        try (Scope ignored = GenAiSpans.makeCurrent(span, request.conversationId())) {
+            traceHeaders(span, response);
             requireValidId(draftId);
             String conversationId = request.conversationId();
             String customerId = conversationService.requireCustomerId(conversationId);
@@ -122,7 +124,7 @@ public class PaymentController {
         } catch (RuntimeException e) {
             span.setAttribute(GenAiAttributes.BANK_OUTCOME, e instanceof BankingException be ? be.getCode().name()
                     : "ERROR");
-            AgentSpanRunner.recordFailure(span, e);
+            GenAiSpans.recordFailure(span, e);
             throw e;
         } finally {
             span.end();
@@ -131,27 +133,15 @@ public class PaymentController {
 
     @PostMapping(value = "/{draftId}/cancel", consumes = MediaType.APPLICATION_JSON_VALUE)
     public TransferDraftView cancel(@PathVariable String draftId,
-                                    @Valid @RequestBody ApiRequests.DraftActionRequest request,
-                                    HttpServletResponse response) {
-        Span span = businessSpan("payment.cancel", "cancel", draftId, request.conversationId());
-        try (Scope ignored = span.makeCurrent()) {
-            traceHeaders(span, response, "cancel");
-            requireValidId(draftId);
-            String conversationId = request.conversationId();
-            String customerId = conversationService.requireCustomerId(conversationId);
-            TransferDraftView view = paymentService.cancel(draftId, conversationId, customerId,
-                    "Cancelled by the user in the UI.");
-            conversationService.recordSystemNote(conversationId, "User clicked Cancel in the UI: transfer draft to "
-                    + view.beneficiaryName() + " of " + view.amount().toPlainString() + " " + view.currency()
-                    + " is now " + view.status() + ". No money was moved.");
-            span.setAttribute(GenAiAttributes.BANK_OUTCOME, view.status());
-            return view;
-        } catch (RuntimeException e) {
-            AgentSpanRunner.recordFailure(span, e);
-            throw e;
-        } finally {
-            span.end();
-        }
+                                    @Valid @RequestBody ApiRequests.DraftActionRequest request) {
+        requireValidId(draftId);
+        String conversationId = request.conversationId();
+        String customerId = conversationService.requireCustomerId(conversationId);
+        TransferDraftView view = paymentService.cancel(draftId, conversationId, customerId, "Cancelled by the user in the UI.");
+        conversationService.recordSystemNote(conversationId, "User clicked Cancel in the UI: transfer draft to "
+                + view.beneficiaryName() + " of " + view.amount().toPlainString() + " " + view.currency()
+                + " is now " + view.status() + ". No money was moved.");
+        return view;
     }
 
     /** Control input for the confirmation: only for a pending draft of this conversation (else confirm() rejects). */
@@ -195,31 +185,14 @@ public class PaymentController {
         throw blocked;
     }
 
-    private static void traceHeaders(Span span, HttpServletResponse response, String operation) {
-        if (!span.getSpanContext().isValid()) {
+    private static void traceHeaders(Span span, HttpServletResponse response) {
+        String traceId = GenAiSpans.traceId(span);
+        if (traceId == null) {
             return;
         }
-        String traceId = span.getSpanContext().getTraceId();
         response.setHeader(TRACE_ID_HEADER, traceId);
         response.setHeader(AO_TRACE_ID_HEADER, AoIds.aoTraceUuid(traceId));
-        log.info("Payment {} traceId={}", operation, traceId);
-    }
-
-    private Span businessSpan(String name, String operation, String draftId, String conversationId) {
-        SpanBuilder builder = telemetry.tracer().spanBuilder(name)
-                .setNoParent()
-                .setSpanKind(SpanKind.INTERNAL)
-                .setAttribute(GenAiAttributes.OPERATION_NAME, GenAiAttributes.OP_EXECUTE_TOOL)
-                .setAttribute(GenAiAttributes.TOOL_NAME, name)
-                .setAttribute(GenAiAttributes.BANK_OPERATION, operation)
-                .setAttribute(GenAiAttributes.CONVERSATION_ID, conversationId == null ? "" : conversationId)
-                .setAttribute(GenAiAttributes.TOOL_CALL_ARGUMENTS, content.toolArguments(mapper.createObjectNode()
-                        .put("draftId", draftId == null ? "" : draftId)));
-        if (draftId != null && DRAFT_ID.matcher(draftId).matches()) {
-            builder.setAttribute(GenAiAttributes.BANK_DRAFT_REF, TransferToolSideEffects.draftRef(draftId));
-            draftTraces.creationSpan(draftId).ifPresent(builder::addLink);
-        }
-        return builder.startSpan();
+        log.info("Payment confirm traceId={}", traceId);
     }
 
     private static void requireValidId(String draftId) {

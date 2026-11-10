@@ -1,6 +1,6 @@
 package com.demo.bankagent.support;
 
-import com.demo.bankagent.observability.BankTelemetry;
+import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
@@ -9,7 +9,11 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 
-/** Records spans in memory instead of exporting them (no network); used by the instrumentation integration tests. */
+/**
+ * Stands in for the OpenTelemetry Java agent inside the test JVM: an OpenTelemetry SDK that records spans in memory
+ * (no network). The application code is unchanged - it only sees an OpenTelemetry instance, like the one the agent
+ * installs. The real agent is exercised by OtelJavaAgentIT.
+ */
 @TestConfiguration(proxyBeanMethods = false)
 public class InMemoryTelemetryConfig {
 
@@ -20,11 +24,11 @@ public class InMemoryTelemetryConfig {
 
     @Bean
     @Primary
-    public BankTelemetry testTelemetry(InMemorySpanExporter exporter) {
-        SdkTracerProvider provider = SdkTracerProvider.builder()
-                .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+    public OpenTelemetry testOpenTelemetry(InMemorySpanExporter exporter) {
+        return OpenTelemetrySdk.builder()
+                .setTracerProvider(SdkTracerProvider.builder()
+                        .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+                        .build())
                 .build();
-        OpenTelemetrySdk sdk = OpenTelemetrySdk.builder().setTracerProvider(provider).build();
-        return new BankTelemetry(sdk, "test", true, new BankTelemetry.ExportStats(), provider);
     }
 }

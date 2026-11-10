@@ -2,14 +2,11 @@ package com.demo.bankagent.tool;
 
 import com.demo.bankagent.conversation.ConversationService;
 import com.demo.bankagent.governance.GovernedToolExecutor;
-import com.demo.bankagent.observability.DraftTraceRegistry;
-import com.demo.bankagent.observability.GenAiAttributes;
 import com.demo.bankagent.service.PaymentService;
 import com.demo.bankagent.trace.DraftEventTrace;
 import com.demo.bankagent.trace.ExecutionTrace;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.opentelemetry.api.trace.Span;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -18,35 +15,21 @@ import java.util.Optional;
 import org.springframework.stereotype.Component;
 
 /**
- * Business side effects of the payment tools as seen by the governance layer: remembers which span created a
- * draft (for the span link of the later UI confirmation) and withdraws a just-created draft when Agent Control
- * blocks its output. The withdrawal is a normal, audited cancellation (code CONTROL_WITHDRAWN).
+ * Withdraws a just-created transfer draft when Agent Control blocks the output of the write tool (Control only).
+ * The withdrawal is a normal, audited cancellation (code CONTROL_WITHDRAWN); nothing is rolled back silently.
  */
 @Component
 public class TransferToolSideEffects implements GovernedToolExecutor.ToolSideEffects {
 
     private final PaymentService paymentService;
     private final ConversationService conversationService;
-    private final DraftTraceRegistry draftTraces;
     private final ObjectMapper mapper;
 
     public TransferToolSideEffects(PaymentService paymentService, ConversationService conversationService,
-                                   DraftTraceRegistry draftTraces, ObjectMapper mapper) {
+                                   ObjectMapper mapper) {
         this.paymentService = paymentService;
         this.conversationService = conversationService;
-        this.draftTraces = draftTraces;
         this.mapper = mapper;
-    }
-
-    @Override
-    public void afterSuccess(String toolName, String conversationId, String resultText, Span toolSpan) {
-        if (!"createTransferDraft".equals(toolName)) {
-            return;
-        }
-        createdDraftId(resultText).ifPresent(draftId -> {
-            draftTraces.remember(draftId, toolSpan.getSpanContext());
-            toolSpan.setAttribute(GenAiAttributes.BANK_DRAFT_REF, draftRef(draftId));
-        });
     }
 
     @Override

@@ -1,7 +1,8 @@
 # Application configuration. Secrets are NOT stored here: they are imported from private files outside
 # the repository (default ~/.config/bank-agent-java/application-secrets.properties for OpenAI and
 # ~/.config/bank-agent-java/galileo.properties for the Galileo instrumentation: Observe / Agent Control) or from environment
-# variables, which take precedence.
+# variables, which take precedence. Observe itself (export to Splunk AO) is done by the OpenTelemetry Java agent that
+# scripts/run.sh --observe attaches; it is configured with standard OTEL_* settings, not in this file.
 spring:
   application:
     name: bank-agent-java
@@ -125,16 +126,10 @@ bank-agent:
     control-read-failure-mode: ${CONTROL_READ_FAILURE_MODE:}
     control-write-failure-mode: ${CONTROL_WRITE_FAILURE_MODE:}
     max-control-steer-retries: ${MAX_CONTROL_STEER_RETRIES:}
-  # Non-secret OpenTelemetry tuning (not user configuration).
+  # Non-secret tuning of the application's Observe helpers. Export, batching and sampling are settings of the
+  # OpenTelemetry Java agent (config/otel-javaagent.properties, OTEL_* variables), not of the application.
   observability:
     service-version: "@project.version@"
-    deployment-environment: local-demo
-    sampling-ratio: 1.0
-    export-timeout: 10s
-    batch-schedule-delay: 2s
-    max-export-batch-size: 256
-    max-queue-size: 2048
-    max-attribute-length: 16384
     max-content-chars: 2000
     api-timeout: 10s
     api-max-attempts: 3
@@ -155,5 +150,3 @@ logging:
     root: INFO
     com.demo.bankagent: INFO
     dev.langchain4j: WARN
-    # OTLP exporter failures are logged at WARN by the SDK; never enable HTTP wire logging (it contains headers).
-    io.opentelemetry: WARN

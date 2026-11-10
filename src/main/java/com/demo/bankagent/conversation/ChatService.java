@@ -11,11 +11,10 @@ import com.demo.bankagent.control.ControlStage;
 import com.demo.bankagent.control.ControlStep;
 import com.demo.bankagent.control.ControlledStepRunner;
 import com.demo.bankagent.control.StepCatalog;
-import com.demo.bankagent.governance.StepGovernance;
 import com.demo.bankagent.llm.LlmErrorTranslator;
-import com.demo.bankagent.observability.AgentSpanRunner;
 import com.demo.bankagent.observability.AoIds;
 import com.demo.bankagent.observability.GenAiAttributes;
+import com.demo.bankagent.observability.GenAiSpans;
 import com.demo.bankagent.service.BankingException;
 import com.demo.bankagent.service.ErrorCode;
 import com.demo.bankagent.trace.AgentStepTrace;
@@ -43,10 +42,15 @@ import org.springframework.stereotype.Service;
  * Entry point for one chat turn: resolves or creates the conversation, serializes turns of the same
  * conversation, runs the Supervisor and returns the answer together with the real execution trace.
  *
- * <p>Instrumentation: each turn is one OpenTelemetry trace whose root span is "invoke_agent BankingAssistant" (bound to the
- * conversation via gen_ai.conversation.id, so AO groups the turns of a conversation into one session). Agent
- * Control step "banking-assistant" checks the user's message before the Supervisor runs (PRE) and the final answer
- * before it is returned (POST). A blocked turn returns a clear, safe answer; protected content is never returned.
+ * <p>Observe: one of the two hand-written spans of the application. Each turn is wrapped in
+ * "invoke_agent BankingAssistant" (gen_ai.conversation.id, so AO groups the turns of a conversation into one
+ * session). It is needed because a turn - Supervisor routing plus several LangChain4j AI Services - is not a single
+ * framework call, so no LangChain4j event marks its start and end. Its parent is the HTTP request span of the
+ * OpenTelemetry Java agent; the router, agent, LLM and tool spans below it come from LangChain4j listeners.
+ *
+ * <p>Control: Agent Control step "banking-assistant" checks the user's message before the Supervisor runs (PRE)
+ * and the final answer before it is returned (POST). A blocked turn returns a clear, safe answer; protected content
+ * is never returned.
  */
 @Service
 public class ChatService {
@@ -63,18 +67,18 @@ public class ChatService {
     private final SupervisorAgent supervisor;
     private final BankAgentProperties properties;
     private final ControlledStepRunner control;
-    private final AgentSpanRunner spans;
+    private final GenAiSpans spans;
     private final ChatModel rewriter;
 
     public ChatService(ConversationService conversationService, SupervisorAgent supervisor,
-                       BankAgentProperties properties, ControlledStepRunner control, AgentSpanRunner spans,
-                       StepGovernance governance, ChatModel chatModel) {
+                       BankAgentProperties properties, ControlledStepRunner control, GenAiSpans spans,
+                       ChatModel chatModel) {
         this.conversationService = conversationService;
         this.supervisor = supervisor;
         this.properties = properties;
         this.control = control;
         this.spans = spans;
-        this.rewriter = governance.observeChatModel(chatModel, "banking-assistant-rewrite");
+        this.rewriter = chatModel;
     }
 
     public record ChatTurnResult(String conversationId, boolean newConversation, String messageId, String answer,
@@ -112,8 +116,8 @@ public class ChatService {
         ExecutionTrace trace = ExecutionTrace.begin(conversation.getId());
         trace.setUserMessage(message);
         Span root = spans.startAgent(ROOT_AGENT, conversation.getId(), message);
-        try (Scope ignored = root.makeCurrent()) {
-            trace.setTraceId(AgentSpanRunner.currentTraceId());
+        try (Scope ignored = GenAiSpans.makeCurrent(root, conversation.getId())) {
+            trace.setTraceId(GenAiSpans.traceId(root));
             List<Conversation.Turn> history = conversation.recentTurns(properties.agent().routerHistoryTurns());
             Turn turn = governedTurn(conversation.getId(), message, history);
             conversationService.recordUserMessage(conversation, turn.inputWithheld() ? WITHHELD_USER_MESSAGE : message);
@@ -133,7 +137,7 @@ public class ChatService {
                     durationMs, properties.openai().model(), trace.controlDecisions(), trace.traceId(),
                     AoIds.aoTraceUuid(trace.traceId()));
         } catch (RuntimeException e) {
-            AgentSpanRunner.recordFailure(root, e);
+            GenAiSpans.recordFailure(root, e);
             throw e;
         } finally {
             root.end();

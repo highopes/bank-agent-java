@@ -4,6 +4,7 @@ import com.demo.bankagent.config.BankAgentProperties;
 import com.demo.bankagent.control.StepCatalog;
 import com.demo.bankagent.governance.StepGovernance;
 import com.demo.bankagent.llm.SecretMasker;
+import com.demo.bankagent.observability.LangChain4jOtelBridge;
 import com.demo.bankagent.service.BankingException;
 import com.demo.bankagent.tool.AccountTools;
 import com.demo.bankagent.tool.PaymentTools;
@@ -24,10 +25,15 @@ import org.springframework.context.annotation.Configuration;
  * Wires the three domain agents as LangChain4j AI services. The model decides when to call the
  * @Tool methods; tool executions are recorded into the request's ExecutionTrace.
  *
- * <p>Instrumentation: the model and the tools are obtained through {@link StepGovernance}: each agent gets a
- * GovernedChatModel (LLM spans + LLM Control, step name "&lt;agent&gt;-agent") and every @Tool method a
- * GovernedToolExecutor (tool span + PRE/POST Control around the real method). The original afterToolExecution
- * and error handlers are unchanged.
+ * <p>Instrumentation is registered here once for every agent, with LangChain4j's own extension points:
+ * <ul>
+ *   <li>Observe: {@code registerListeners} (agent spans) and {@code beforeToolExecution} / {@code afterToolExecution}
+ *       (tool spans) feed {@link LangChain4jOtelBridge}; LLM spans come from the same bridge registered as a
+ *       ChatModelListener in LlmConfig. With no OpenTelemetry Java agent attached they do nothing.</li>
+ *   <li>Control: {@link StepGovernance} returns the original model and tools when CONTROL_MODE=off, and adds the
+ *       PRE/POST enforcement adapters only when CONTROL_MODE=remote-api.</li>
+ * </ul>
+ * No @Tool method, service or repository contains instrumentation code.
  */
 @Configuration
 public class AgentConfig {
@@ -35,39 +41,48 @@ public class AgentConfig {
     private static final Logger log = LoggerFactory.getLogger(AgentConfig.class);
     private static final int MAX_ARGUMENT_CHARS = 300;
 
+    private final StepGovernance control;
+    private final LangChain4jOtelBridge otel;
+
+    public AgentConfig(StepGovernance control, LangChain4jOtelBridge otel) {
+        this.control = control;
+        this.otel = otel;
+    }
+
     @Bean
     public AccountAgent accountAgent(ChatModel chatModel, AccountTools tools, AgentMemoryStores memory,
-                                     AgentPrompts prompts, BankAgentProperties properties, StepGovernance governance) {
-        return build(AccountAgent.class, AgentType.ACCOUNT, chatModel, tools, memory, prompts, properties, governance);
+                                     AgentPrompts prompts, BankAgentProperties properties) {
+        return build(AccountAgent.class, AgentType.ACCOUNT, chatModel, tools, memory, prompts, properties);
     }
 
     @Bean
     public TransactionsAgent transactionsAgent(ChatModel chatModel, TransactionTools tools, AgentMemoryStores memory,
-                                               AgentPrompts prompts, BankAgentProperties properties,
-                                               StepGovernance governance) {
-        return build(TransactionsAgent.class, AgentType.TRANSACTIONS, chatModel, tools, memory, prompts, properties,
-                governance);
+                                               AgentPrompts prompts, BankAgentProperties properties) {
+        return build(TransactionsAgent.class, AgentType.TRANSACTIONS, chatModel, tools, memory, prompts, properties);
     }
 
     @Bean
     public PaymentsAgent paymentsAgent(ChatModel chatModel, PaymentTools tools, AgentMemoryStores memory,
-                                       AgentPrompts prompts, BankAgentProperties properties, StepGovernance governance) {
-        return build(PaymentsAgent.class, AgentType.PAYMENTS, chatModel, tools, memory, prompts, properties, governance);
+                                       AgentPrompts prompts, BankAgentProperties properties) {
+        return build(PaymentsAgent.class, AgentType.PAYMENTS, chatModel, tools, memory, prompts, properties);
     }
 
-    private static <T> T build(Class<T> type, AgentType agent, ChatModel chatModel, Object tools,
-                               AgentMemoryStores memory, AgentPrompts prompts, BankAgentProperties properties,
-                               StepGovernance governance) {
-        return AiServices.builder(type)
-                .chatModel(governance.governChatModel(chatModel, StepCatalog.agentStep(agent)))
+    private <T> T build(Class<T> type, AgentType agent, ChatModel chatModel, Object tools,
+                        AgentMemoryStores memory, AgentPrompts prompts, BankAgentProperties properties) {
+        AiServices<T> builder = AiServices.builder(type)
+                .chatModel(control.chatModel(chatModel, StepCatalog.agentStep(agent)))
                 .chatMemoryProvider(memory.provider(agent))
                 .systemMessageProvider(memoryId -> prompts.systemPrompt(agent))
-                .tools(governance.governTools(tools))
                 .maxSequentialToolsInvocations(properties.agent().maxToolInvocations())
-                .afterToolExecution(AgentConfig::recordToolExecution)
+                .registerListeners(otel.aiServiceListeners())
+                .beforeToolExecution(otel::toolStarted)
+                .afterToolExecution(execution -> {
+                    recordToolExecution(execution);
+                    otel.toolFinished(execution);
+                })
                 .toolExecutionErrorHandler(AgentConfig::toolError)
-                .toolArgumentsErrorHandler(AgentConfig::argumentError)
-                .build();
+                .toolArgumentsErrorHandler(AgentConfig::argumentError);
+        return control.tools(builder, tools).build();
     }
 
     static void recordToolExecution(ToolExecution execution) {

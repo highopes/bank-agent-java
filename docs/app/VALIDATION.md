@@ -27,7 +27,7 @@ shasum -a 256 -c <baseline>             # 在 Golden Demo 目录核对原文件�
 
 ## 2. 离线自动化测试（`scripts/test.sh` = `./mvnw -B clean verify`）
 
-结果：**BUILD SUCCESS，49 个测试，0 失败，0 错误，0 跳过**。这 49 个测试在加入 Galileo 插桩后没有修改，仍全部通过；当前全量测试共 105 个，见 README「自动化测试」。
+结果：**BUILD SUCCESS，49 个测试，0 失败，0 错误，0 跳过**。这 49 个测试在加入 Galileo 插桩（以及 2026-11-09 的插桩重构）后没有修改，仍全部通过；当前全量测试共 119 个，见 README「自动化测试」。
 
 - Surefire 单元测试：15 个（`AmountMentionsTest`、`AmountParserTest`、`SupervisorAgentTest`、`DemoControllerLoopbackTest`、`LlmSafetyUnitTest`）
 - Failsafe 集成测试：34 个（`BankingServicesIT`、`PaymentServiceIT`、`LlmIntentRouterIT`、`AgentFlowIT`、`ApiControllersIT`）

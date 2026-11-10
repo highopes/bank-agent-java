@@ -99,9 +99,9 @@ else
   info "Application jar not built yet; scripts/run.sh builds it automatically."
 fi
 
-# 9. Galileo instrumentation: Observe (OpenTelemetry) and Agent Control. Read-only: shows the profile, every final value with
-#    its source ([derived] / [override] / [default]) and credentials only as <set>/<missing>; looks up the
-#    project / agent stream by name but never creates anything.
+# 9. Galileo instrumentation: Observe (official OpenTelemetry Java agent + LangChain4j listeners) and Agent Control.
+#    Read-only: shows the profile, every final value with its source ([derived] / [override] / [default]) and
+#    credentials only as <set>/<missing>; looks up the project / agent stream by name but never creates anything.
 echo
 echo "${C_BOLD}== Galileo Observe / Agent Control ==${C_RESET}"
 if [ -f "$BANK_AGENT_GALILEO_FILE" ]; then
@@ -113,6 +113,26 @@ else
 fi
 OBS="$(galileo_switch OBSERVABILITY_ENABLED false)"
 CTL="$(galileo_switch CONTROL_MODE off)"
+
+# Observe = official OpenTelemetry Java agent (pinned version, SHA-256 verified, cached outside the repository).
+otel_jar="${BANK_AGENT_OTEL_AGENT_JAR:-$OTEL_AGENT_CACHE_JAR}"
+if [ -s "$otel_jar" ]; then
+  if [ "$(sha256_of "$otel_jar")" = "$OTEL_JAVAAGENT_SHA256" ]; then
+    ok "OpenTelemetry Java agent $OTEL_JAVAAGENT_VERSION present, SHA-256 verified: $otel_jar"
+  else
+    blocker "OpenTelemetry Java agent at $otel_jar does not match the pinned SHA-256 (delete it to download again)."
+  fi
+elif [ -n "${BANK_AGENT_OTEL_AGENT_JAR:-}" ]; then
+  blocker "BANK_AGENT_OTEL_AGENT_JAR points to a missing file: $otel_jar"
+else
+  info "OpenTelemetry Java agent $OTEL_JAVAAGENT_VERSION not downloaded yet; scripts/run.sh --observe fetches it once (Maven Central) into $(dirname "$otel_jar")."
+fi
+if [ -f "$BANK_AGENT_OTEL_CONFIG" ]; then
+  ok "Agent settings (no secrets): config/otel-javaagent.properties"
+else
+  blocker "Missing config/otel-javaagent.properties"
+fi
+check_java_tool_options
 if [ -n "${SELECTED_JAVA_HOME:-}" ]; then
   if (ensure_jar >/dev/null 2>&1) && prepare_truststore >/dev/null 2>&1; then
     if ! run_galileo_cli preflight; then

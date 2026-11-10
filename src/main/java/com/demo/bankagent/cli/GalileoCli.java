@@ -30,11 +30,13 @@ import java.util.Optional;
 import java.util.Properties;
 
 /**
- * Command-line helper used by scripts/preflight.sh and scripts/galileo-smoke.sh (plain main, no Spring context).
- * It reuses {@link AoEndpointResolver}, so the scripts show exactly the values the application would use.
- * It never prints credentials and never creates anything in the backend.
+ * Command-line helper used by scripts/run.sh, scripts/preflight.sh and scripts/galileo-smoke.sh (plain main, no
+ * Spring context). It reuses {@link AoEndpointResolver}, so the scripts use exactly the values the application
+ * would use. It never prints credentials to the terminal and never creates anything in the backend.
  *
  * <pre>
+ *   otel-env                          standard OTEL_* settings of the OpenTelemetry Java agent (KEY=VALUE lines,
+ *                                     read by scripts/run.sh --observe; contains the OTLP credential)
  *   preflight                         resolved settings + read-only reachability / project lookup
  *   smoke                             real chat questions against the running app, then trace read-back in AO
  *   trace &lt;otel-trace-id|ao-uuid&gt;...  read-only AO span tree of traces
@@ -57,11 +59,12 @@ public final class GalileoCli {
     public static void main(String[] args) throws Exception {
         String command = args.length == 0 ? "preflight" : args[0];
         int code = switch (command) {
+            case "otel-env" -> otelEnv();
             case "preflight" -> preflight();
             case "smoke" -> smoke();
             case "trace" -> trace(List.of(args).subList(1, args.length));
             default -> {
-                System.err.println("Usage: GalileoCli preflight | smoke | trace <trace-id>...");
+                System.err.println("Usage: GalileoCli otel-env | preflight | smoke | trace <trace-id>...");
                 yield 2;
             }
         };
@@ -102,6 +105,31 @@ public final class GalileoCli {
         return new AoApiClient(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(), JSON,
                 s.apiUrl().value(), s.profile() == AoBackendProfile.O11Y ? "X-SF-Token" : "Galileo-API-Key",
                 s.apiToken().value(), Duration.ofSeconds(15), 2);
+    }
+
+    // ---- otel-env -----------------------------------------------------------------------------------
+
+    /**
+     * Translates galileo.properties into the standard OpenTelemetry Java agent settings (OTLP endpoint, auth and
+     * routing headers, resource attributes). Output: KEY=VALUE lines on stdout, consumed by scripts/run.sh, which
+     * exports them only into the application JVM and never echoes them. Problems go to stderr with exit code 1.
+     */
+    static int otelEnv() throws IOException {
+        AoSettings s;
+        try {
+            s = settings();
+        } catch (AoConfigurationException e) {
+            System.err.println("[FAIL] " + e.getMessage());
+            return 1;
+        }
+        if (!s.problems().isEmpty()) {
+            System.err.println("[FAIL] Galileo configuration is incomplete for profile '" + s.profile().key() + "': "
+                    + String.join(" ", s.problems()) + " Private file: " + galileoFile()
+                    + ". Key reference: docs/CONFIG-MAPPING.md");
+            return 1;
+        }
+        s.otelAgentEnvironment().forEach((key, value) -> System.out.println(key + "=" + value));
+        return 0;
     }
 
     // ---- preflight ----------------------------------------------------------------------------------
@@ -188,6 +216,7 @@ public final class GalileoCli {
                 HttpResponse.BodyHandlers.ofString()).body());
         System.out.println("Application: " + base + " model=" + status.path("model").asText()
                 + " observability=" + status.path("observability").path("enabled").asBoolean()
+                + " otelJavaAgentActive=" + status.path("observability").path("otelJavaAgentActive").asBoolean()
                 + " control=" + status.path("control").path("mode").asText());
         System.out.println("Control gateway: " + status.path("control").path("gateway").asText());
         System.out.println("Control event channel: " + status.path("control").path("eventChannel").asText());

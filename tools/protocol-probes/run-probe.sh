@@ -18,7 +18,8 @@ export AO_O11Y_TOKEN="${AO_O11Y_TOKEN:-$(_prop AO_O11Y_TOKEN)}"
 
 CP_FILE="$BANK_AGENT_ROOT/target/protocol-probes-classpath.txt"
 if [ ! -s "$CP_FILE" ] || [ "$BANK_AGENT_ROOT/pom.xml" -nt "$CP_FILE" ]; then
-  (cd "$BANK_AGENT_ROOT" && ./mvnw -B -q dependency:build-classpath -Dmdep.outputFile="$CP_FILE" -Dmdep.includeScope=runtime) >/dev/null
+  # Profile protocol-probes adds the OTel SDK + OTLP exporter that only the probes use (the application has none).
+  (cd "$BANK_AGENT_ROOT" && ./mvnw -B -q -P protocol-probes dependency:build-classpath -Dmdep.outputFile="$CP_FILE" -Dmdep.includeScope=runtime) >/dev/null
 fi
 
 JVM_OPTS=(-Dfile.encoding=UTF-8)
